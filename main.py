@@ -407,18 +407,17 @@ if __name__ == "__main__":
         folder_to_save_reports_to=None,
         skip_previously_forecasted_questions=True,
          llms={  # choose your model names or GeneralLlm llms here, otherwise defaults will be chosen for you
-             "default": GeneralLlm(
-                 model="/meta-llama/llama-4-scout", # "anthropic/claude-3-5-sonnet-20241022", etc (see docs for litellm)
+                 "default": GeneralLlm(
+                 model="openrouter/openai/gpt-4o", # "anthropic/claude-3-5-sonnet-20241022", etc (see docs for litellm)
                  temperature=0.3,
                  timeout=40,
                  allowed_tries=2,
              ),
              "summarizer": "openrouter/openai/gpt-4o",
-             "researcher": "openrouter/openai/gpt-4o-mini:online", "openrouter/openai/gpt-4o-mini:online", "openrouter/openai/gpt-4o-mini:online",
+             "researcher": ""openrouter/openai/gpt-4o-mini:online", "openrouter/openai/gpt-4o-mini:online", "openrouter/openai/gpt-4o-mini:online",
              "parser": "openrouter/qwen/qwen3-coder",
          },
-    )
-         
+    )         
     
     if run_mode == "tournament":
         seasonal_tournament_reports = asyncio.run(
