@@ -414,7 +414,7 @@ if __name__ == "__main__":
                  allowed_tries=2,
              ),
              "summarizer": "openrouter/openai/gpt-4o",
-             "researcher": "openrouter/google/gemini-2.0-flash-001",  
+             "researcher": "openrouter/google/gemini-2.0-flash-001:online",  
              "parser": "openrouter/qwen/qwen3-coder",
          },
     )         
