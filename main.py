@@ -414,7 +414,7 @@ if __name__ == "__main__":
                  allowed_tries=2,
              ),
              "summarizer": "openrouter/openai/gpt-4o-mini",
-             "researcher": "openrouter/qwen/qwen3-coder:free:online",
+             "researcher": "openrouter/openai/gpt-4o-mini:online",
              "parser": "openrouter/openai/gpt-4o-mini",
          },
     )
