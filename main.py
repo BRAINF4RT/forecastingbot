@@ -417,7 +417,8 @@ if __name__ == "__main__":
              "researcher": "openrouter/openai/gpt-4o-mini:online", "openrouter/openai/gpt-4o-mini:online", "openrouter/openai/gpt-4o-mini:online",
              "parser": "openrouter/qwen/qwen3-coder",
     )
-
+         }
+    
     if run_mode == "tournament":
         seasonal_tournament_reports = asyncio.run(
             template_bot.forecast_on_tournament(
