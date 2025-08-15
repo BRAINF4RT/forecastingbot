@@ -98,7 +98,7 @@ class FallTemplateBot2025(ForecastBot):
     ) # Allows 1 request per second on average with a burst of 2 requests initially. Set this as a class variable
     await self.rate_limiter.wait_till_able_to_acquire_resources(1) # 1 because it's consuming 1 request (use more if you are adding a token limit)
     ```
-    Additionally OpenRouter has large rate limits immediately on account creation
+    Additionally  has large rate limits immediately on account creation
     """
 
     _max_concurrent_questions = (
@@ -408,7 +408,7 @@ if __name__ == "__main__":
         skip_previously_forecasted_questions=True,
          llms={  # choose your model names or GeneralLlm llms here, otherwise defaults will be chosen for you
              "default": GeneralLlm(
-                 model="openrouter/meta-llama/llama-4-scout", # "anthropic/claude-3-5-sonnet-20241022", etc (see docs for litellm)
+                 model="/meta-llama/llama-4-scout", # "anthropic/claude-3-5-sonnet-20241022", etc (see docs for litellm)
                  temperature=0.3,
                  timeout=40,
                  allowed_tries=2,
@@ -416,7 +416,7 @@ if __name__ == "__main__":
              "summarizer": "openrouter/openai/gpt-4o",
              "researcher": "openrouter/openai/gpt-4o-mini:online", "openrouter/openai/gpt-4o-mini:online", "openrouter/openai/gpt-4o-mini:online",
              "parser": "openrouter/qwen/qwen3-coder",
-         }
+         },
     )
          
     
