@@ -416,7 +416,7 @@ if __name__ == "__main__":
         #     "summarizer": "openai/gpt-4o-mini",
         #     "researcher": "asknews/deep-research/low",
         #     "parser": "openai/gpt-4o-mini",
-        # },
+         },
     )
 
     if run_mode == "tournament":
