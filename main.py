@@ -408,13 +408,17 @@ if __name__ == "__main__":
         skip_previously_forecasted_questions=True,
          llms={  # choose your model names or GeneralLlm llms here, otherwise defaults will be chosen for you
                  "default": GeneralLlm(
-                 model="openrouter/openai/gpt-4o", # "anthropic/claude-3-5-sonnet-20241022", etc (see docs for litellm)
-                 temperature=0.3,
+                 model="openrouter/google/gemini-2.5-pro", # "anthropic/claude-3-5-sonnet-20241022", etc (see docs for litellm)
+                 temperature=0.2,
                  timeout=40,
                  allowed_tries=2,
              ),
-             "summarizer": "openrouter/openai/gpt-4o",
-             "researcher": "openrouter/google/gemini-2.0-flash-001:online",  
+             "summarizer": "openrouter/meta-llama/llama-4-scout",
+             "researcher": "openrouter/openai/gpt-4.1:online",
+             "researcher": "openrouter/openai/gpt-4.1:online",
+             "researcher": "openrouter/openai/gpt-4.1:online",
+             "researcher": "openrouter/openai/gpt-4.1:online",
+             "researcher": "openrouter/openai/gpt-4.1:online",
              "parser": "openrouter/qwen/qwen3-coder",
          },
     )         
