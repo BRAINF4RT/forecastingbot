@@ -66,7 +66,7 @@ class FallTemplateBot2025(ForecastBot):
         ...
         llms={  # choose your model names or GeneralLlm llms here, otherwise defaults will be chosen for you
             "default": GeneralLlm(
-                model="openrouter/openai/gpt-4o", # "anthropic/claude-3-5-sonnet-20241022", etc (see docs for litellm)
+                model="/openai/gpt-4o", # "anthropic/claude-3-5-sonnet-20241022", etc (see docs for litellm)
                 temperature=0.3,
                 timeout=40,
                 allowed_tries=2,
@@ -408,15 +408,14 @@ if __name__ == "__main__":
         skip_previously_forecasted_questions=True,
          llms={  # choose your model names or GeneralLlm llms here, otherwise defaults will be chosen for you
              "default": GeneralLlm(
-                 model="openrouter/deepseek/deepseek-r1-0528:free", # "anthropic/claude-3-5-sonnet-20241022", etc (see docs for litellm)
+                 model="openrouter/meta-llama/llama-4-scout", # "anthropic/claude-3-5-sonnet-20241022", etc (see docs for litellm)
                  temperature=0.3,
                  timeout=40,
                  allowed_tries=2,
              ),
-             "summarizer": "openrouter/openai/gpt-4o-mini",
-             "researcher": "openrouter/openai/gpt-4o-mini:online",
-             "parser": "openrouter/openai/gpt-4o-mini",
-         },
+             "summarizer": "openrouter/openai/gpt-4o",
+             "researcher": "openrouter/openai/gpt-4o-mini:online", "openrouter/openai/gpt-4o-mini:online", "openrouter/openai/gpt-4o-mini:online",
+             "parser": "openrouter/qwen/qwen3-coder
     )
 
     if run_mode == "tournament":
