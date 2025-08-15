@@ -162,7 +162,7 @@ class FallTemplateBot2025(ForecastBot):
                 research = ""
             else:
                 research_results = []
-                for _ in range(2):
+                for _ in range(3):
                     result = await self.get_llm("researcher", "llm").invoke(prompt)
                     research_results.append(result)
                 research = "\n\n".join(research_results)
