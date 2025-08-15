@@ -414,7 +414,8 @@ if __name__ == "__main__":
                  allowed_tries=2,
              ),
              "summarizer": "openrouter/openai/gpt-4o",
-             "researcher": "openrouter/openai/gpt-4o-mini:online", "openrouter/perplexity/sonar-reasoning-pro:online",  
+             "researcher": "openrouter/openai/gpt-4o-mini:online", 
+             "researcher": "openrouter/perplexity/sonar-reasoning-pro:online",  
              "parser": "openrouter/qwen/qwen3-coder",
          },
     )         
