@@ -161,7 +161,12 @@ class FallTemplateBot2025(ForecastBot):
             elif not researcher or researcher == "None":
                 research = ""
             else:
-                research = await self.get_llm("researcher", "llm").invoke(prompt)
+                research_results = []
+                for _ in range(5):
+                    result = await self.get_llm("researcher", "llm").invoke(prompt)
+                    research_results.append(result)
+                research = "\n\n".join(research_results)
+                #research = await self.get_llm("researcher", "llm").invoke(prompt)
             logger.info(f"Found Research for URL {question.page_url}:\n{research}")
             return research
 
@@ -408,16 +413,12 @@ if __name__ == "__main__":
         skip_previously_forecasted_questions=True,
          llms={  # choose your model names or GeneralLlm llms here, otherwise defaults will be chosen for you
                  "default": GeneralLlm(
-                 model="openrouter/deepseek/deepseek-chat-v3-0324", # "anthropic/claude-3-5-sonnet-20241022", etc (see docs for litellm)
+                 model="openrouter/meta-llama/llama-4-maverick", # "anthropic/claude-3-5-sonnet-20241022", etc (see docs for litellm)
                  temperature=0.2,
                  timeout=40,
                  allowed_tries=2,
              ),
              "summarizer": "openrouter/meta-llama/llama-4-scout",
-             "researcher": "openrouter/openai/gpt-4.1:online",
-             "researcher": "openrouter/openai/gpt-4.1:online",
-             "researcher": "openrouter/openai/gpt-4.1:online",
-             "researcher": "openrouter/openai/gpt-4.1:online",
              "researcher": "openrouter/openai/gpt-4.1:online",
              "parser": "openrouter/qwen/qwen3-coder",
          },
