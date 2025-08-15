@@ -415,7 +415,7 @@ if __name__ == "__main__":
              ),
              "summarizer": "openrouter/openai/gpt-4o",
              "researcher": "openrouter/openai/gpt-4o-mini:online", "openrouter/openai/gpt-4o-mini:online", "openrouter/openai/gpt-4o-mini:online",
-             "parser": "openrouter/qwen/qwen3-coder
+             "parser": "openrouter/qwen/qwen3-coder",
     )
 
     if run_mode == "tournament":
