@@ -341,7 +341,7 @@ if __name__ == "__main__":
         skip_previously_forecasted_questions=False,
          llms={  
                  "default": GeneralLlm(
-                 model="metaculus/openai/o3-mini-high",
+                 model="openrouter/openai/o3-mini-high",
                  temperature=0.2,
                  timeout=40,
                  allowed_tries=2,
