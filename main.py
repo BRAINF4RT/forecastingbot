@@ -115,7 +115,7 @@ class FallTemplateBot2025(ForecastBot):
                 f"""
                 You are an assistant to a superforecaster.
                 The superforecaster will give you a question they intend to forecast on.
-                To be a great assistant, you generate a concise but detailed rundown of the most relevant news, including if the question would resolve Yes or No based on current information.
+                To be a great assistant, you generate a slightly shortened but very detailed rundown of the most relevant news AND most relevent information from searches, including if the question would resolve Yes or No based on current information.
                 You do not produce forecasts yourself.
 
                 Question:
@@ -131,25 +131,25 @@ class FallTemplateBot2025(ForecastBot):
             if isinstance(researcher, GeneralLlm):
                 research = await researcher.invoke(prompt)
             elif researcher == "asknews/news-summaries":
-                research = await AskNewsSearcher().get_formatted_news_async(
+                research = await AskNewsSearcher().get_formatted_news_async( #not implemented
                     question.question_text
                 )
             elif researcher == "asknews/deep-research/medium-depth":
-                research = await AskNewsSearcher().get_formatted_deep_research(
+                research = await AskNewsSearcher().get_formatted_deep_research( #not implemented
                     question.question_text,
                     sources=["asknews", "google"],
                     search_depth=2,
                     max_depth=4,
                 )
             elif researcher == "asknews/deep-research/high-depth":
-                research = await AskNewsSearcher().get_formatted_deep_research(
+                research = await AskNewsSearcher().get_formatted_deep_research( #not implemented
                     question.question_text,
                     sources=["asknews", "google"],
                     search_depth=4,
                     max_depth=6,
                 )
             elif researcher.startswith("smart-searcher"):
-                model_name = researcher.removeprefix("smart-searcher/")
+                model_name = researcher.removeprefix("smart-searcher/") #not implemented
                 searcher = SmartSearcher(
                     model=model_name,
                     temperature=0,
@@ -163,7 +163,7 @@ class FallTemplateBot2025(ForecastBot):
             else:
                 research_results = []
                 for _ in range(5):
-                    result = await self.get_llm("researcher", "llm").invoke(prompt)
+                    result = await self.get_llm("researcher", "llm").invoke(prompt) #Generates 5 "researcher"s that research individually, information is conjoined at the end.
                     research_results.append(result)
                 research = "\n\n".join(research_results)
                 #research = await self.get_llm("researcher", "llm").invoke(prompt)
@@ -411,9 +411,9 @@ if __name__ == "__main__":
         publish_reports_to_metaculus=True,
         folder_to_save_reports_to=None,
         skip_previously_forecasted_questions=True,
-         llms={  # choose your model names or GeneralLlm llms here, otherwise defaults will be chosen for you
+         llms={  
                  "default": GeneralLlm(
-                 model="openrouter/meta-llama/llama-4-maverick", # "anthropic/claude-3-5-sonnet-20241022", etc (see docs for litellm)
+                 model="openrouter/openai/o3-mini-high",
                  temperature=0.2,
                  timeout=40,
                  allowed_tries=2,
