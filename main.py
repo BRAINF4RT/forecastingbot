@@ -341,12 +341,12 @@ if __name__ == "__main__":
         skip_previously_forecasted_questions=True,
          llms={  
                  "default": GeneralLlm(
-                 model="openrouter/openai/o3-mini-high",
+                 model="metaculus/openai/o3-mini-high",
                  temperature=0.2,
                  timeout=40,
                  allowed_tries=2,
              ),
-             "summarizer": "openrouter/meta-llama/llama-4-scout",
+             "summarizer": "openrouter/anthropic/claude-opus-4",
              "researcher": "openrouter/openai/gpt-4o-search-preview:online",
              "parser": "openrouter/qwen/qwen3-coder",
          },
