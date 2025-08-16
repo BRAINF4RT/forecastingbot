@@ -27,79 +27,7 @@ logger = logging.getLogger(__name__)
 
 
 class FallTemplateBot2025(ForecastBot):
-    """
-    This is a copy of the template bot for Fall 2025 Metaculus AI Tournament.
-    This bot is what is used by Metaculus in our benchmark, but is also provided as a template for new bot makers.
-    This template is given as-is, and though we have covered most test cases
-    in forecasting-tools it may be worth double checking key components locally.
 
-    Main changes since Q2:
-    - An LLM now parses the final forecast output (rather than programmatic parsing)
-    - Added resolution criteria and fine print explicitly to the research prompt
-    - Previously in the prompt, nothing about upper/lower bound was shown when the bounds were open. Now a suggestion is made when this is the case.
-    - Support for nominal bounds was added (i.e. when there are discrete questions and normal upper/lower bounds are not as intuitive)
-
-    The main entry point of this bot is `forecast_on_tournament` in the parent class.
-    See the script at the bottom of the file for more details on how to run the bot.
-    Ignoring the finer details, the general flow is:
-    - Load questions from Metaculus
-    - For each question
-        - Execute run_research a number of times equal to research_reports_per_question
-        - Execute respective run_forecast function `predictions_per_research_report * research_reports_per_question` times
-        - Aggregate the predictions
-        - Submit prediction (if publish_reports_to_metaculus is True)
-    - Return a list of ForecastReport objects
-
-    Only the research and forecast functions need to be implemented in ForecastBot subclasses,
-    though you may want to override other ones.
-    In this example, you can change the prompts to be whatever you want since,
-    structure_output uses an LLMto intelligently reformat the output into the needed structure.
-
-    By default (i.e. 'tournament' mode), when you run this script, it will forecast on any open questions for the
-    MiniBench and Seasonal AIB tournaments. If you want to forecast on only one or the other, you can remove one
-    of them from the 'tournament' mode code at the bottom of the file.
-
-    You can experiment with what models work best with your bot by using the `llms` parameter when initializing the bot.
-    You can initialize the bot with any number of models. For example,
-    ```python
-    my_bot = MyBot(
-        ...
-        llms={  # choose your model names or GeneralLlm llms here, otherwise defaults will be chosen for you
-            "default": GeneralLlm(
-                model="/openai/gpt-4o", # "anthropic/claude-3-5-sonnet-20241022", etc (see docs for litellm)
-                temperature=0.3,
-                timeout=40,
-                allowed_tries=2,
-            ),
-            "summarizer": "openai/gpt-4o-mini",
-            "researcher": "asknews/deep-research/low",
-            "parser": "openai/gpt-4o-mini",
-        },
-    )
-    ```
-
-    Then you can access the model in custom functions like this:
-    ```python
-    research_strategy = self.get_llm("researcher", "model_name"
-    if research_strategy == "asknews/deep-research/low":
-        ...
-    # OR
-    summarizer = await self.get_llm("summarizer", "model_name").invoke(prompt)
-    # OR
-    reasoning = await self.get_llm("default", "llm").invoke(prompt)
-    ```
-
-    If you end up having trouble with rate limits and want to try a more sophisticated rate limiter try:
-    ```python
-    from forecasting_tools import RefreshingBucketRateLimiter
-    rate_limiter = RefreshingBucketRateLimiter(
-        capacity=2,
-        refresh_rate=1,
-    ) # Allows 1 request per second on average with a burst of 2 requests initially. Set this as a class variable
-    await self.rate_limiter.wait_till_able_to_acquire_resources(1) # 1 because it's consuming 1 request (use more if you are adding a token limit)
-    ```
-    Additionally  has large rate limits immediately on account creation
-    """
 
     _max_concurrent_questions = (
         2  # Set this to whatever works for your search-provider/ai-model rate limits
