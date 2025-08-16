@@ -346,9 +346,9 @@ if __name__ == "__main__":
                  timeout=40,
                  allowed_tries=2,
              ),
-             "summarizer": "metaculus/meta-llama/llama-4-maverick",
+             "summarizer": "openrouter/meta-llama/llama-4-scout",
              "researcher": "openrouter/openai/gpt-4o-search-preview:online",
-             "parser": "metaculus/openai/gpt-5-nano",
+             "parser": "openrouter/qwen/qwen3-coder",
          },
     )         
     #ballin
