@@ -333,12 +333,12 @@ if __name__ == "__main__":
     ], "Invalid run mode"
 
     template_bot = FallTemplateBot2025(
-        research_reports_per_question=1,
+        research_reports_per_question=2,
         predictions_per_research_report=5,
         use_research_summary_to_forecast=False,
         publish_reports_to_metaculus=True,
         folder_to_save_reports_to=None,
-        skip_previously_forecasted_questions=True,
+        skip_previously_forecasted_questions=False,
          llms={  
                  "default": GeneralLlm(
                  model="metaculus/openai/o3-mini-high",
@@ -346,12 +346,12 @@ if __name__ == "__main__":
                  timeout=40,
                  allowed_tries=2,
              ),
-             "summarizer": "openrouter/anthropic/claude-opus-4",
-             "researcher": "openrouter/openai/gpt-4o-search-preview:online",
-             "parser": "openrouter/qwen/qwen3-coder",
+             "summarizer": "metaculus/anthropic/claude-opus-4",
+             "researcher": "metaculus/openai/gpt-4o-search-preview:online",
+             "parser": "metaculus/qwen/qwen3-coder",
          },
     )         
-    
+    #ballin
     if run_mode == "tournament":
         seasonal_tournament_reports = asyncio.run(
             template_bot.forecast_on_tournament(
