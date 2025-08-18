@@ -375,11 +375,11 @@ if __name__ == "__main__":
             )
         )
     elif run_mode == "market_pulse":
-    # The Metaculus cup is a good way to test the bot's performance on regularly open questions. You can also use AXC_2025_TOURNAMENT_ID = 32564 or AI_2027_TOURNAMENT_ID = "ai-2027"
+        MP25Q3_TOURNAMENT_ID = 32773
+     # The Metaculus cup is a good way to test the bot's performance on regularly open questions. You can also use AXC_2025_TOURNAMENT_ID = 32564 or AI_2027_TOURNAMENT_ID = "ai-2027"
      # The Metaculus cup may not be initialized near the beginning of a season (i.e. January, May, September)
         forecast_reports = asyncio.run(
             template_bot.forecast_on_tournament(
-                MP25Q3_TOURNAMENT_ID = 32773
                 MetaculusApi.MP25Q3_TOURNAMENT_ID, return_exceptions=True 
             )
         )       
