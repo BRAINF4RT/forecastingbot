@@ -374,9 +374,9 @@ if __name__ == "__main__":
                 MetaculusApi.CURRENT_METACULUS_CUP_ID, return_exceptions=True
             )
         )
-      elif run_mode == "market_pulse":
-        MP25Q3_TOURNAMENT_ID = 32773 
+      elif run_mode == "market_pulse": 
         template_bot.skip_previously_forecasted_questions = False
+        MP25Q3_TOURNAMENT_ID = 32773
         forecast_reports = asyncio.run(
             template_bot.forecast_on_tournament(
                 MP25Q3_TOURNAMENT_ID, return_exceptions=True
