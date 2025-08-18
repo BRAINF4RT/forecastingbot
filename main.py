@@ -320,7 +320,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--mode",
         type=str,
-        choices=["tournament", "metaculus_cup", "test_questions"],
+        choices=["tournament", "metaculus_cup", "test_questions", "market_pulse",],
         default="tournament",
         help="Specify the run mode (default: tournament)",
     )
