@@ -348,7 +348,7 @@ if __name__ == "__main__":
                  allowed_tries=2,
              ),
              "summarizer": "openrouter/meta-llama/llama-4-scout",
-             "researcher": "openrouter/openai/gpt-4o-mini-search-preview:online",
+             "researcher": "openrouter/openai/gpt-4o-search-preview:online",
              "parser": "openrouter/qwen/qwen3-coder",
          },
     )         
