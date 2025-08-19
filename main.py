@@ -347,9 +347,9 @@ if __name__ == "__main__":
                  timeout=40,
                  allowed_tries=2,
              ),
-             "summarizer": "openrouter/meta-llama/llama-3.3-70b-instruct:free",
+             "summarizer": "openrouter/openai/gpt-4.1-nano",
              "researcher": "openrouter/anthropic/claude-sonnet-4:online",
-             "parser": "openrouter/meta-llama/llama-3.3-70b-instruct:free",
+             "parser": "openrouter/openai/gpt-4.1-nano",
          },
     )         
     #ballin
