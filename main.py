@@ -347,9 +347,9 @@ if __name__ == "__main__":
                  timeout=40,
                  allowed_tries=2,
              ),
-             "summarizer": "openrouter/meta-llama/llama-4-scout",
+             "summarizer": "openrouter/deepseek/deepseek-r1:free",
              "researcher": "openrouter/openai/gpt-4o-search-preview:online",
-             "parser": "openrouter/qwen/qwen3-coder",
+             "parser": "openrouter/deepseek/deepseek-r1:free",
          },
     )         
     #ballin
