@@ -1,4 +1,5 @@
 https://openrouter.ai/docs/features/web-search
+https://openrouter.ai/announcements/introducing-web-search-via-the-api
 ":online" model prices
 OpenAI Model Pricing
 For GPT-4.1, GPT-4o, and GPT-4o search preview Models:
@@ -22,4 +23,6 @@ Search Context Size	Price per 1000 Requests
 Low	$6.00
 Medium	$10.00
 High	$14.00
+Non GPT models
+$5 per 1000 (functional)
 
