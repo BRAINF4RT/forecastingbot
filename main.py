@@ -348,7 +348,7 @@ if __name__ == "__main__":
                  allowed_tries=2,
              ),
              "summarizer": "openrouter/deepseek/deepseek-r1:free",
-             "researcher": "openrouter/openai/gpt-4o-search-preview:online",
+             "researcher": "openrouter/openai/gpt-4o-mini-search-preview:online",
              "parser": "openrouter/deepseek/deepseek-r1:free",
          },
     )         
