@@ -1,0 +1,25 @@
+https://openrouter.ai/docs/features/web-search
+":online" model prices
+OpenAI Model Pricing
+For GPT-4.1, GPT-4o, and GPT-4o search preview Models:
+Search Context Size	Price per 1000 Requests
+Low	$30.00
+Medium	$35.00
+High	$50.00
+For GPT-4.1-Mini, GPT-4o-Mini, and GPT-4o-Mini-Search-Preview Models:
+Search Context Size	Price per 1000 Requests
+Low	$25.00
+Medium	$27.50
+High	$30.00
+Perplexity Model Pricing
+For Sonar and SonarReasoning:
+Search Context Size	Price per 1000 Requests
+Low	$5.00
+Medium	$8.00
+High	$12.00
+For SonarPro and SonarReasoningPro:
+Search Context Size	Price per 1000 Requests
+Low	$6.00
+Medium	$10.00
+High	$14.00
+
