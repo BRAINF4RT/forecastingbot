@@ -90,7 +90,7 @@ class FallTemplateBot2025(ForecastBot):
                 research = ""
             else:
                 research_results = []
-                for _ in range(5):
+                for _ in range(1):
                     result = await self.get_llm("researcher", "llm").invoke(prompt) #Generates 5 "researcher"s that research individually, information is conjoined at the end.
                     research_results.append(result)
                 research = "\n\n".join(research_results)
@@ -348,7 +348,7 @@ if __name__ == "__main__":
                  allowed_tries=2,
              ),
              "summarizer": "openrouter/meta-llama/llama-4-scout",
-             "researcher": "metaculus/perplexity/sonar-reasoning-small-online",
+             "researcher": "metaculus/anthropic/claude-3-haiku:online",
              "parser": "openrouter/meta-llama/llama-4-scout",
          },
     )         
