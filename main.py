@@ -347,9 +347,9 @@ if __name__ == "__main__":
                  timeout=40,
                  allowed_tries=2,
              ),
-             "summarizer": "openrouter/deepseek/deepseek-r1-0528:free",
+             "summarizer": "openrouter/meta-llama/llama-3.3-70b-instruct:free",
              "researcher": "openrouter/anthropic/claude-sonnet-4:online",
-             "parser": "openrouter/deepseek/deepseek-r1-0528:free",
+             "parser": "openrouter/meta-llama/llama-3.3-70b-instruct:free",
          },
     )         
     #ballin
