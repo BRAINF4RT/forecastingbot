@@ -348,7 +348,7 @@ if __name__ == "__main__":
                  allowed_tries=2,
              ),
              "summarizer": "openrouter/meta-llama/llama-4-scout",
-             "researcher": "openrouter/perplexity/sonar-deep-research:online",
+             "researcher": "openrouter/perplexity/sonar:online",
              "parser": "openrouter/meta-llama/llama-4-scout",
          },
     )         
