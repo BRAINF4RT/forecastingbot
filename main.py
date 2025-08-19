@@ -348,7 +348,7 @@ if __name__ == "__main__":
                  allowed_tries=2,
              ),
              "summarizer": "openrouter/meta-llama/llama-4-scout",
-             "researcher": "metaculus/anthropic/claude-3-5-sonnet-20241022:online",
+             "researcher": "openrouter/deepseek/deepseek-chat-v3-0324:free:online",
              "parser": "openrouter/meta-llama/llama-4-scout",
          },
     )         
