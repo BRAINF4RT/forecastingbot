@@ -35,6 +35,8 @@ jobs:
       #   with:
       #     path: .venv
       #     key: venv-${{ runner.os }}-${{ steps.setup-python.outputs.python-version }}-${{ hashFiles('**/poetry.lock') }}
+      - name: Regen poetrylock
+        run: poetry lock --no-interaction
       - name: Install dependencies
         run: poetry install --no-interaction --no-root
       - name: Run bot
