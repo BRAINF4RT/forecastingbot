@@ -384,14 +384,14 @@ if __name__ == "__main__":
         skip_previously_forecasted_questions=True,
          llms={  
                  "default": GeneralLlm(
-                 model="openrouter/openai/gpt-oss-20b:free", #"openrouter/openai/o3-mini-high",
+                 model="openrouter/openai/gpt-oss-20b", #"openrouter/openai/o3-mini-high",
                  temperature=0.2,
                  timeout=40,
                  allowed_tries=2,
              ),
-             "summarizer": "openrouter/openai/gpt-oss-20b:free", #"openrouter/openai/gpt-4.1-nano",
-             "researcher": "openrouter/openai/gpt-oss-20b:free", #"openrouter/anthropic/claude-sonnet-4:online",
-             "parser": "openrouter/openai/gpt-oss-20b:free", #"openrouter/openai/gpt-4.1-nano",
+             "summarizer": "openrouter/openai/gpt-oss-20b", #"openrouter/openai/gpt-4.1-nano",
+             "researcher": "openrouter/openai/gpt-oss-20b", #"openrouter/anthropic/claude-sonnet-4:online",
+             "parser": "openrouter/openai/gpt-oss-20b", #"openrouter/openai/gpt-4.1-nano",
          },
     )         
     #ballin
