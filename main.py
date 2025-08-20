@@ -391,7 +391,7 @@ if __name__ == "__main__":
                  timeout=40,
                  allowed_tries=2,
              ),
-             "summarizer": "openrouter/openai/gpt-oss-20b", #"openrouter/openai/gpt-4.1-nano",
+             "summarizer": "openrouter/qwen/qwen3-coder", #"openrouter/openai/gpt-4.1-nano",
              "researcher": "openrouter/openai/gpt-oss-120b", #"openrouter/anthropic/claude-sonnet-4:online",
              "parser": "openrouter/openai/gpt-oss-20b", #"openrouter/openai/gpt-4.1-nano",
          },
