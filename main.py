@@ -119,7 +119,7 @@ class FallTemplateBot2025(ForecastBot):
                 researcher_llm = self.get_llm("researcher", "llm")
 
                 research_results = []
-                for _ in range(5):
+                for _ in range(1):
                     # 5 searches per run
                     search_snippets = search_internet(question.question_text)
 
