@@ -1,7 +1,7 @@
 import argparse
 import asyncio
 import logging
-from .duckduckgo_search import DDGS
+from duckduckgo_search import DDGS
 from datetime import datetime
 from typing import Literal
 
