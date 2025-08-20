@@ -60,7 +60,7 @@ class FallTemplateBot2025(ForecastBot):
 
 
     _max_concurrent_questions = (
-        2  
+        4  
     )
     _concurrency_limiter = asyncio.Semaphore(_max_concurrent_questions)
 
