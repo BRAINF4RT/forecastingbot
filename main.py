@@ -1,6 +1,7 @@
 import argparse
 import asyncio
 import logging
+from duckduckgo_search import DDGS
 from datetime import datetime
 from typing import Literal
 
@@ -25,6 +26,19 @@ from forecasting_tools import (
 
 logger = logging.getLogger(__name__)
 
+ddgs = DDGS()
+
+def search_internet(query, max_results=5):
+    """
+    Perform a DuckDuckGo search and return joined snippets.
+    """
+    try:
+        results = ddgs.text(query, max_results=max_results)
+        filtered_results = [result for result in results if 'body' in result]
+        return "\n".join([result['body'] for result in filtered_results])
+    except Exception as e:
+        print(f"Error searching internet: {e}")
+        return ""
 
 class FallTemplateBot2025(ForecastBot):
 
@@ -90,11 +104,28 @@ class FallTemplateBot2025(ForecastBot):
             elif not researcher or researcher == "None":
                 research = ""
             else:
+                from ddgsearch import search_internet
+                researcher_llm = self.get_llm("researcher", "llm")
+
                 research_results = []
                 for _ in range(5):
-                    result = await self.get_llm("researcher", "llm").invoke(prompt) 
+                    # 5 searches per run
+                    search_snippets = search_internet(question.question_text)
+
+                    # Combine with the forecasting prompt
+                    combined_prompt = prompt + f"\n\nRelevant Search Results:\n{search_snippets}"
+
+                    # Ask researcher LLM to write up findings
+                    result = await researcher_llm.invoke(combined_prompt)
                     research_results.append(result)
+
                 research = "\n\n".join(research_results)
+
+                #research_results = []
+                #for _ in range(5):
+                    #result = await self.get_llm("researcher", "llm").invoke(prompt) 
+                    #research_results.append(result)
+                #research = "\n\n".join(research_results)
                 #research = await self.get_llm("researcher", "llm").invoke(prompt)
             logger.info(f"Found Research for URL {question.page_url}:\n{research}")
             return research
