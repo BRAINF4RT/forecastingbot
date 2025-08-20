@@ -26,3 +26,7 @@ High	$14.00
 Non GPT models
 $5 per 1000 (functional)
 
+
+
+https://github.com/alby13/ollama-internet-search-tool/tree/main
+
