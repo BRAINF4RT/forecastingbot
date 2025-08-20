@@ -29,11 +29,7 @@ logger = logging.getLogger(__name__)
 
 ddgs = DDGS()
 
-def search_internet(query, max_results=5):
-    """
-    Perform a DuckDuckGo search and return joined clean snippets.
-    Filters out anything that looks like HTML/JS.
-    """
+def search_internet(query, max_results=10):
     try:
         results = ddgs.text(query, max_results=max_results)
         snippets = []
@@ -41,10 +37,8 @@ def search_internet(query, max_results=5):
             body = result.get("body", "")
             if not body:
                 continue
-            # Skip DDG’s bot-detection junk
             if "DDG.deep.anomalyDetectionBlock" in body:
                 continue
-            # Remove any HTML/JS tags
             body = re.sub(r"<[^>]+>", "", body)
             snippets.append(body.strip())
         return "\n".join(snippets)
@@ -70,7 +64,7 @@ class FallTemplateBot2025(ForecastBot):
                 You are an assistant to a superforecaster.
                 The superforecaster will give you a question they intend to forecast on.
                 To be a great assistant, you generate a very detailed rundown of the most relevant news AND most relevent information from searches, including if the question would resolve Yes or No based on current information.
-                You MUST use EXACTLY 5 web searches in your research.
+                You MUST use AT LEAST 5 web searches in your research.
                 You do not produce forecasts yourself.
 
                 Question:
