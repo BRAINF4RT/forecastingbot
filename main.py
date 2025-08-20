@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 
 ddgs = DDGS()
 
-def search_internet(query, max_results=5):
+def search_internet(query, max_results=1):
     """
     Perform a DuckDuckGo search and return joined clean snippets.
     Filters out anything that looks like HTML/JS.
@@ -70,7 +70,6 @@ class FallTemplateBot2025(ForecastBot):
                 You are an assistant to a superforecaster.
                 The superforecaster will give you a question they intend to forecast on.
                 To be a great assistant, you generate a very detailed rundown of the most relevant news AND most relevent information from searches, including if the question would resolve Yes or No based on current information.
-                You MUST have exactly 5 searches.
                 You do not produce forecasts yourself.
 
                 Question:
