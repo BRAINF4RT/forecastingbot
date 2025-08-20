@@ -1,6 +1,8 @@
 import os
 
-os.environ["OPENAI_API_KEY"] = ""
+if "OPENAI_API_KEY" in os.environ:
+    del os.environ["OPENAI_API_KEY"]
+
 os.environ["OPENAI_TRACING"] = "false"
 
 import argparse
