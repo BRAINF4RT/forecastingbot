@@ -343,14 +343,14 @@ if __name__ == "__main__":
         skip_previously_forecasted_questions=True,
          llms={  
                  "default": GeneralLlm(
-                 model="openrouter/openai/o3-mini-high",
+                 model="openrouter/deepseek/deepseek-chat-v3-0324:free", #"openrouter/openai/o3-mini-high",
                  temperature=0.2,
                  timeout=40,
                  allowed_tries=2,
              ),
-             "summarizer": "openrouter/openai/gpt-4.1-nano",
-             "researcher": "openrouter/anthropic/claude-sonnet-4:online",
-             "parser": "openrouter/openai/gpt-4.1-nano",
+             "summarizer": "openrouter/qwen/qwen3-coder:free", #"openrouter/openai/gpt-4.1-nano",
+             "researcher": "openrouter/google/gemini-2.0-flash-exp:free:online", #"openrouter/anthropic/claude-sonnet-4:online",
+             "parser": "openrouter/qwen/qwen3-coder:free", #"openrouter/openai/gpt-4.1-nano",
          },
     )         
     #ballin
