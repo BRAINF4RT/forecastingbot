@@ -91,12 +91,12 @@ class FallTemplateBot2025(ForecastBot):
                 research = ""
             else:
                 research_results = []
-                for _ in range(5):
+                for _ in range(1):
+                    def stream_assistant_response():
                     result = await self.get_llm("researcher", "llm").invoke(prompt) 
                     research_results.append(result)
                 research = "\n\n".join(research_results)
-                #research = await self.get_llm("researcher", "llm").invoke(prompt)
-            logger.info(f"Found Research for URL {question.page_url}:\n{research}")
+            #logger.info(f"Found Research for URL {question.page_url}:\n{research}")
             return research
 
     async def _run_forecast_on_binary(
@@ -349,7 +349,7 @@ if __name__ == "__main__":
                  allowed_tries=2,
              ),
              "summarizer": "openrouter/qwen/qwen3-coder:free", #"openrouter/openai/gpt-4.1-nano",
-             "researcher": "openrouter/google/gemini-2.0-flash-exp:free:online", #"openrouter/anthropic/claude-sonnet-4:online",
+             "researcher": "openrouter/google/gemini-2.0-flash-exp:free", #"openrouter/anthropic/claude-sonnet-4:online",
              "parser": "openrouter/qwen/qwen3-coder:free", #"openrouter/openai/gpt-4.1-nano",
          },
     )         
