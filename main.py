@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 
 ddgs = DDGS()
 
-def search_internet(query, max_results=1):
+def search_internet(query, max_results=5):
     """
     Perform a DuckDuckGo search and return joined clean snippets.
     Filters out anything that looks like HTML/JS.
@@ -70,6 +70,7 @@ class FallTemplateBot2025(ForecastBot):
                 You are an assistant to a superforecaster.
                 The superforecaster will give you a question they intend to forecast on.
                 To be a great assistant, you generate a very detailed rundown of the most relevant news AND most relevent information from searches, including if the question would resolve Yes or No based on current information.
+                You MUST use EXACTLY 5 web searches in your research.
                 You do not produce forecasts yourself.
 
                 Question:
@@ -118,14 +119,11 @@ class FallTemplateBot2025(ForecastBot):
                 researcher_llm = self.get_llm("researcher", "llm")
 
                 research_results = []
-                for _ in range(1):
-                    # 5 searches per run
+                for _ in range(5):
                     search_snippets = search_internet(question.question_text)
 
-                    # Combine with the forecasting prompt
                     combined_prompt = prompt + f"\n\nRelevant Search Results:\n{search_snippets}"
 
-                    # Ask researcher LLM to write up findings
                     result = await researcher_llm.invoke(combined_prompt)
                     research_results.append(result)
 
@@ -384,13 +382,13 @@ if __name__ == "__main__":
         skip_previously_forecasted_questions=True,
          llms={  
                  "default": GeneralLlm(
-                 model="openrouter/openai/gpt-oss-20b", #"openrouter/openai/o3-mini-high",
+                 model="openrouter/openai/o3-mini-high", #"openrouter/openai/o3-mini-high",
                  temperature=0.2,
                  timeout=40,
                  allowed_tries=2,
              ),
              "summarizer": "openrouter/openai/gpt-oss-20b", #"openrouter/openai/gpt-4.1-nano",
-             "researcher": "openrouter/openai/gpt-oss-20b", #"openrouter/anthropic/claude-sonnet-4:online",
+             "researcher": "openrouter/openai/gpt-oss-120b", #"openrouter/anthropic/claude-sonnet-4:online",
              "parser": "openrouter/openai/gpt-oss-20b", #"openrouter/openai/gpt-4.1-nano",
          },
     )         
