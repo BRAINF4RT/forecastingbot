@@ -349,7 +349,7 @@ if __name__ == "__main__":
                  allowed_tries=2,
              ),
              "summarizer": "openrouter/qwen/qwen3-coder:free", #"openrouter/openai/gpt-4.1-nano",
-             "researcher": "openrouter/google/gemini-2.0-flash-exp:free", #"openrouter/anthropic/claude-sonnet-4:online",
+             "researcher": "openrouter/deepseek/deepseek-chat-v3-0324:free", #"openrouter/anthropic/claude-sonnet-4:online",
              "parser": "openrouter/qwen/qwen3-coder:free", #"openrouter/openai/gpt-4.1-nano",
          },
     )         
