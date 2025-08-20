@@ -1,8 +1,12 @@
+import os
+
+os.environ["OPENAI_API_KEY"] = ""
+os.environ["OPENAI_TRACING"] = "false"
+
 import argparse
 import asyncio
 import logging
 import re
-import os
 from duckduckgo_search import DDGS
 from datetime import datetime
 from typing import Literal
@@ -25,9 +29,6 @@ from forecasting_tools import (
     clean_indents,
     structure_output,
 )
-
-os.environ["OPENAI_API_KEY"] = ""
-os.environ["OPENAI_TRACING"] = "false"
 
 logger = logging.getLogger(__name__)
 
