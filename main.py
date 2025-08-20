@@ -104,7 +104,6 @@ class FallTemplateBot2025(ForecastBot):
             elif not researcher or researcher == "None":
                 research = ""
             else:
-                from ddgsearch import search_internet
                 researcher_llm = self.get_llm("researcher", "llm")
 
                 research_results = []
