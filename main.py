@@ -1,6 +1,7 @@
 import argparse
 import asyncio
 import logging
+import re
 from duckduckgo_search import DDGS
 from datetime import datetime
 from typing import Literal
@@ -30,12 +31,23 @@ ddgs = DDGS()
 
 def search_internet(query, max_results=5):
     """
-    Perform a DuckDuckGo search and return joined snippets.
+    Perform a DuckDuckGo search and return joined clean snippets.
+    Filters out anything that looks like HTML/JS.
     """
     try:
         results = ddgs.text(query, max_results=max_results)
-        filtered_results = [result for result in results if 'body' in result]
-        return "\n".join([result['body'] for result in filtered_results])
+        snippets = []
+        for result in results:
+            body = result.get("body", "")
+            if not body:
+                continue
+            # Skip DDG’s bot-detection junk
+            if "DDG.deep.anomalyDetectionBlock" in body:
+                continue
+            # Remove any HTML/JS tags
+            body = re.sub(r"<[^>]+>", "", body)
+            snippets.append(body.strip())
+        return "\n".join(snippets)
     except Exception as e:
         print(f"Error searching internet: {e}")
         return ""
