@@ -1,6 +1,16 @@
+import os
+
+if "OPENAI_API_KEY" in os.environ:
+    del os.environ["OPENAI_API_KEY"]
+
+os.environ["OPENAI_TRACING"] = "false"
+
 import argparse
 import asyncio
 import logging
+
+logging.getLogger("openai.agents").setLevel(logging.ERROR)
+
 import re
 from duckduckgo_search import DDGS
 from datetime import datetime
