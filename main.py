@@ -1,6 +1,7 @@
 import argparse
 import asyncio
 import logging
+import time
 from datetime import datetime
 from typing import Literal
 from duckduckgo_search import DDGS
@@ -14,6 +15,7 @@ def search_internet(query: str, max_results: int = 10):
         return filtered_results
     except Exception as e:
         print(f"Error searching internet: {e}")
+        time.sleep(5)
         return []
 
 async def get_combined_response_openrouter(prompt: str, query: str, model: str):
