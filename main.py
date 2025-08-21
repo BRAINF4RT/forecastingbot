@@ -3,6 +3,40 @@ import asyncio
 import logging
 from datetime import datetime
 from typing import Literal
+from duckduckgo_search import DDGS
+ddgs = DDGS()
+
+def search_internet(query: str, max_results: int = 5):
+    try:
+        results = ddgs.text(query, max_results=max_results)
+        filtered_results = [result for result in results if 'body' in result]
+        return filtered_results
+    except Exception as e:
+        print(f"Error searching internet: {e}")
+        return []
+
+async def get_combined_response_openrouter(prompt: str, query: str, model: str):
+    """
+    Takes the forecast research prompt, adds DuckDuckGo search snippets,
+    and asks the researcher LLM for a summary.
+    """
+    search_results = search_internet(query)
+    search_content = "\n".join([result['body'] for result in search_results])
+
+    full_prompt = f"""{prompt}
+
+    Additional Internet Search Results:
+    {search_content}
+    """
+
+    llm = GeneralLlm(
+        model=model,
+        temperature=0.2,
+        timeout=40,
+        allowed_tries=2,
+    )
+    response = await llm.invoke(full_prompt)
+    return response
 
 from forecasting_tools import (
     AskNewsSearcher,
@@ -91,10 +125,13 @@ class FallTemplateBot2025(ForecastBot):
             else:
                 research_results = []
                 for _ in range(5):
-                    result = await self.get_llm("researcher", "llm").invoke(prompt) #Generates 5 "researcher"s that research individually, information is conjoined at the end.
+                    result = await get_combined_response_openrouter(
+                        prompt,
+                        question.question_text,
+                        model=self.get_llm("researcher")
+                    )
                     research_results.append(result)
                 research = "\n\n".join(research_results)
-                #research = await self.get_llm("researcher", "llm").invoke(prompt)
             logger.info(f"Found Research for URL {question.page_url}:\n{research}")
             return research
 
