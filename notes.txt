@@ -26,7 +26,6 @@ High	$14.00
 Non GPT models
 $5 per 1000 (functional)
 
-
-
 https://github.com/alby13/ollama-internet-search-tool/tree/main
 
+DDGS is free, however very dodgy and sensitive. Look into BeautifulSoup and other options for websearch
