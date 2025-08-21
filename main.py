@@ -47,6 +47,15 @@ import random
 import time
 import random
 
+USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/117.0",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0 Safari/537.36",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0 Safari/537.36",
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1",
+    "Mozilla/5.0 (Linux; Android 14; Pixel 7 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Mobile Safari/537.36",
+    "Mozilla/5.0 (iPad; CPU OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1",
+]
+
 def retry_with_backoff(func, max_retries=3, base_delay=1, max_delay=60):
     """Retries a sync function with exponential backoff."""
     for attempt in range(max_retries):
@@ -57,15 +66,6 @@ def retry_with_backoff(func, max_retries=3, base_delay=1, max_delay=60):
             logging.warning(f"Attempt {attempt+1} failed with error: {e}. Retrying in {wait:.2f}s...")
             time.sleep(wait)
     raise RuntimeError(f"All {max_retries} retries failed for {func.__name__}")
-
-USER_AGENTS = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/117.0",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0 Safari/537.36",
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0 Safari/537.36",
-    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1",
-    "Mozilla/5.0 (Linux; Android 14; Pixel 7 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Mobile Safari/537.36",
-    "Mozilla/5.0 (iPad; CPU OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1",
-]
 
 def duckduckgo_fallback(query: str, max_results: int = 5) -> list[str]:
     """Fallback: scrape DuckDuckGo HTML results if DDGS API fails."""
@@ -91,7 +91,12 @@ def duckduckgo_fallback(query: str, max_results: int = 5) -> list[str]:
         logging.error(f"Fallback DuckDuckGo scrape failed: {e}")
         return []
 
-def search_internet(query: str, max_results: int = 10, retries: int = 5) -> str:
+ef search_internet(query: str, max_results: int = 10, retries: int = 5) -> str:
+    """
+    Perform a DuckDuckGo search with retries, backoff, jitter, and random UA rotation.
+    Returns a string of combined search snippets.
+    """
+
     for attempt in range(retries):
         try:
             ua = random.choice(USER_AGENTS)
@@ -107,12 +112,27 @@ def search_internet(query: str, max_results: int = 10, retries: int = 5) -> str:
             )
             time.sleep(wait)
 
+    # Fallback if all retries fail
     logging.error(f"All {retries} retries failed for search query: {query}")
     logging.info(f"Trying DuckDuckGo HTML fallback for query: {query}")
-    results = duckduckgo_fallback(query, max_results)
-    if results:
-        return "\n".join(results)
-    return ""
+    try:
+        ua = random.choice(USER_AGENTS)
+        resp = requests.get(
+            "https://html.duckduckgo.com/html/",
+            params={"q": query},
+            headers={"User-Agent": ua},
+            timeout=10,
+        )
+        if resp.status_code == 200:
+            soup = BeautifulSoup(resp.text, "html.parser")
+            snippets = [a.get_text() for a in soup.select(".result__snippet")]
+            return "\n".join(snippets[:max_results])
+        else:
+            logging.error(f"Fallback search failed: HTTP {resp.status_code}")
+    except Exception as e:
+        logging.error(f"Fallback search failed: {e}")
+
+    return ""  # give up completely
 
 class Dingus(ForecastBot):
 
