@@ -7,7 +7,7 @@ from duckduckgo_search import DDGS
 ddgs = DDGS() 
 #Using DuckDuckGo search as a free alternative to the ":online" integrated search that comes pre-baked with openrouter. Works with the ANY model you specify as "researcher". DDGS is a bit fragile and if you have it search too many times at once,
 #it'll set off bot detection and screw up your results. It's pretty slow, but it's free so... ¯\_(ツ)_/¯ 
-def search_internet(query: str, max_results: int = 5):
+def search_internet(query: str, max_results: int = 10):
     try:
         results = ddgs.text(query, max_results=max_results)
         filtered_results = [result for result in results if 'body' in result]
@@ -123,7 +123,7 @@ class FallTemplateBot2025(ForecastBot):
             #This is the main research setup, loops 3 times (or whatever number you can make it that DOESN'T set off DDGS bot detection) and condences the research at the end to get a (hopefully) broader search than if you used only one research bot.
             else:
                 research_results = []
-                for _ in range(3):
+                for _ in range(5):
                     result = await get_combined_response_openrouter(
                         prompt,
                         question.question_text,
