@@ -8,7 +8,7 @@ from duckduckgo_search import DDGS
 ddgs = DDGS() 
 #Using DuckDuckGo search as a free alternative to the ":online" integrated search that comes pre-baked with openrouter. Works with the ANY model you specify as "researcher". DDGS is a bit fragile and if you have it search too many times at once,
 #it'll set off bot detection and screw up your results. It's pretty slow, but it's free so... ¯\_(ツ)_/¯ 
-def search_internet(query: str, max_results: int = 10):
+def search_internet(query: str, max_results: int = 5):
     try:
         results = ddgs.text(query, max_results=max_results)
         filtered_results = [result for result in results if 'body' in result]
