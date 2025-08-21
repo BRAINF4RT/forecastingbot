@@ -1,20 +1,6 @@
-import os
-
-if "OPENAI_API_KEY" in os.environ:
-    del os.environ["OPENAI_API_KEY"]
-
-os.environ["OPENAI_TRACING"] = "false"
-
 import argparse
 import asyncio
 import logging
-
-logging.getLogger("openai.agents").setLevel(logging.ERROR)
-
-import re
-import requests
-from bs4 import BeautifulSoup
-from duckduckgo_search import DDGS
 from datetime import datetime
 from typing import Literal
 
@@ -39,105 +25,12 @@ from forecasting_tools import (
 
 logger = logging.getLogger(__name__)
 
-ddgs = DDGS()
 
-import time
-import random
+class FallTemplateBot2025(ForecastBot):
 
-import time
-import random
-
-USER_AGENTS = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/117.0",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0 Safari/537.36",
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0 Safari/537.36",
-    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1",
-    "Mozilla/5.0 (Linux; Android 14; Pixel 7 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Mobile Safari/537.36",
-    "Mozilla/5.0 (iPad; CPU OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1",
-]
-
-def retry_with_backoff(func, max_retries=3, base_delay=1, max_delay=60):
-    """Retries a sync function with exponential backoff."""
-    for attempt in range(max_retries):
-        try:
-            return func()
-        except Exception as e:
-            wait = min(base_delay * (2 ** attempt), max_delay) + random.uniform(0, 1)
-            logging.warning(f"Attempt {attempt+1} failed with error: {e}. Retrying in {wait:.2f}s...")
-            time.sleep(wait)
-    raise RuntimeError(f"All {max_retries} retries failed for {func.__name__}")
-
-def duckduckgo_fallback(query: str, max_results: int = 5) -> list[str]:
-    """Fallback: scrape DuckDuckGo HTML results if DDGS API fails."""
-    url = "https://duckduckgo.com/html/"
-    params = {"q": query}
-    headers = {"User-Agent": random.choice(USER_AGENTS)}
-
-    try:
-        resp = requests.get(url, params=params, headers=headers, timeout=10)
-        if resp.status_code != 200:
-            logging.error(f"Fallback search failed: HTTP {resp.status_code}")
-            return []
-
-        soup = BeautifulSoup(resp.text, "html.parser")
-        results = []
-        for a in soup.select(".result__snippet"):
-            results.append(a.get_text(strip=True))
-            if len(results) >= max_results:
-                break
-        return results
-
-    except Exception as e:
-        logging.error(f"Fallback DuckDuckGo scrape failed: {e}")
-        return []
-
-def search_internet(query: str, max_results: int = 10, retries: int = 5) -> str:
-    """
-    Perform a DuckDuckGo search with retries, backoff, jitter, and random UA rotation.
-    Returns a string of combined search snippets.
-    """
-
-    for attempt in range(retries):
-        try:
-            ua = random.choice(USER_AGENTS)
-            with DDGS(headers={"User-Agent": ua}) as ddgs:
-                results = [r["body"] for r in ddgs.text(query, max_results=max_results)]
-                if results:
-                    return "\n".join(results)
-
-        except Exception as e:
-            wait = 2 ** attempt + random.uniform(0, 1)
-            logging.warning(
-                f"Search attempt {attempt+1} for '{query}' failed: {e}. Retrying in {wait:.2f}s..."
-            )
-            time.sleep(wait)
-
-    # Fallback if all retries fail
-    logging.error(f"All {retries} retries failed for search query: {query}")
-    logging.info(f"Trying DuckDuckGo HTML fallback for query: {query}")
-    try:
-        ua = random.choice(USER_AGENTS)
-        resp = requests.get(
-            "https://html.duckduckgo.com/html/",
-            params={"q": query},
-            headers={"User-Agent": ua},
-            timeout=10,
-        )
-        if resp.status_code == 200:
-            soup = BeautifulSoup(resp.text, "html.parser")
-            snippets = [a.get_text() for a in soup.select(".result__snippet")]
-            return "\n".join(snippets[:max_results])
-        else:
-            logging.error(f"Fallback search failed: HTTP {resp.status_code}")
-    except Exception as e:
-        logging.error(f"Fallback search failed: {e}")
-
-    return ""  # give up completely
-
-class Dingus(ForecastBot):
 
     _max_concurrent_questions = (
-        1  
+        2  # Set this to whatever works for your search-provider/ai-model rate limits
     )
     _concurrency_limiter = asyncio.Semaphore(_max_concurrent_questions)
 
@@ -151,7 +44,6 @@ class Dingus(ForecastBot):
                 You are an assistant to a superforecaster.
                 The superforecaster will give you a question they intend to forecast on.
                 To be a great assistant, you generate a very detailed rundown of the most relevant news AND most relevent information from searches, including if the question would resolve Yes or No based on current information.
-                You MUST use AT LEAST 5 web searches in your research.
                 You do not produce forecasts yourself.
 
                 Question:
@@ -167,25 +59,25 @@ class Dingus(ForecastBot):
             if isinstance(researcher, GeneralLlm):
                 research = await researcher.invoke(prompt)
             elif researcher == "asknews/news-summaries":
-                research = await AskNewsSearcher().get_formatted_news_async( 
+                research = await AskNewsSearcher().get_formatted_news_async( #not implemented
                     question.question_text
                 )
             elif researcher == "asknews/deep-research/medium-depth":
-                research = await AskNewsSearcher().get_formatted_deep_research( 
+                research = await AskNewsSearcher().get_formatted_deep_research( #not implemented
                     question.question_text,
                     sources=["asknews", "google"],
                     search_depth=2,
                     max_depth=4,
                 )
             elif researcher == "asknews/deep-research/high-depth":
-                research = await AskNewsSearcher().get_formatted_deep_research( 
+                research = await AskNewsSearcher().get_formatted_deep_research( #not implemented
                     question.question_text,
                     sources=["asknews", "google"],
                     search_depth=4,
                     max_depth=6,
                 )
             elif researcher.startswith("smart-searcher"):
-                model_name = researcher.removeprefix("smart-searcher/") 
+                model_name = researcher.removeprefix("smart-searcher/") #not implemented
                 searcher = SmartSearcher(
                     model=model_name,
                     temperature=0,
@@ -197,41 +89,11 @@ class Dingus(ForecastBot):
             elif not researcher or researcher == "None":
                 research = ""
             else:
-                researcher_llm = self.get_llm("researcher", "llm")
-
                 research_results = []
                 for _ in range(5):
-                    search_snippets = search_internet(question.question_text)
-                    combined_prompt = prompt + f"\n\nRelevant Search Results:\n{search_snippets}"
-
-                    for attempt in range(3):
-                        try:
-                            result = await researcher_llm.invoke(combined_prompt)
-                            break
-                        except Exception as e:
-                            wait = 2 ** attempt + random.uniform(0, 1)
-                            logging.warning(
-                                f"researcher_llm.invoke failed (attempt {attempt+1}): {e}. Retrying in {wait:.2f}s..."
-                            )
-                            await asyncio.sleep(wait)
-                    else:
-                        logging.error("All retries failed for researcher_llm.invoke")
-                        result = "Research step failed after retries."
-
+                    result = await self.get_llm("researcher", "llm").invoke(prompt) #Generates 5 "researcher"s that research individually, information is conjoined at the end.
                     research_results.append(result)
-
-                    # 👇 add jitter here between searches
-                    jitter = random.uniform(1, 5)
-                    logging.info(f"Sleeping {jitter:.2f}s before next search to avoid rate limits...")
-                    await asyncio.sleep(jitter)
-
                 research = "\n\n".join(research_results)
-
-                #research_results = []
-                #for _ in range(5):
-                    #result = await self.get_llm("researcher", "llm").invoke(prompt) 
-                    #research_results.append(result)
-                #research = "\n\n".join(research_results)
                 #research = await self.get_llm("researcher", "llm").invoke(prompt)
             logger.info(f"Found Research for URL {question.page_url}:\n{research}")
             return research
@@ -471,23 +333,23 @@ if __name__ == "__main__":
         "market_pulse",
     ], "Invalid run mode"
 
-    template_bot = Dingus(
+    template_bot = FallTemplateBot2025(
         research_reports_per_question=2,
         predictions_per_research_report=5,
         use_research_summary_to_forecast=False,
         publish_reports_to_metaculus=True,
         folder_to_save_reports_to=None,
-        skip_previously_forecasted_questions=True,
+        skip_previously_forecasted_questions=False,
          llms={  
                  "default": GeneralLlm(
-                 model="openrouter/deepseek/deepseek-r1-0528", #"openrouter/openai/o3-mini-high",
+                 model="openrouter/deepseek/deepseek-r1",
                  temperature=0.2,
                  timeout=40,
                  allowed_tries=2,
              ),
-             "summarizer": "openrouter/qwen/qwen3-coder", #"openrouter/openai/gpt-4.1-nano",
-             "researcher": "openrouter/openai/gpt-oss-120b", #"openrouter/anthropic/claude-sonnet-4:online",
-             "parser": "openrouter/openai/gpt-oss-20b", #"openrouter/openai/gpt-4.1-nano",
+             "summarizer": "openrouter/openai/gpt-oss-20b",
+             "researcher": "openrouter/openai/gpt-oss-120b",
+             "parser": "openrouter/qwen/qwen3-coder",
          },
     )         
     #ballin
@@ -525,9 +387,9 @@ if __name__ == "__main__":
         # Example questions are a good way to test the bot's performance on a single question
         EXAMPLE_QUESTIONS = [
             "https://www.metaculus.com/questions/578/human-extinction-by-2100/",  # Human Extinction - Binary
-            #"https://www.metaculus.com/questions/14333/age-of-oldest-human-as-of-2100/",  # Age of Oldest Human - Numeric
-            #"https://www.metaculus.com/questions/22427/number-of-new-leading-ai-labs/",  # Number of New Leading AI Labs - Multiple Choice
-            #"https://www.metaculus.com/c/diffusion-community/38880/how-many-us-labor-strikes-due-to-ai-in-2029/",  # Number of US Labor Strikes Due to AI in 2029 - Discrete
+            "https://www.metaculus.com/questions/14333/age-of-oldest-human-as-of-2100/",  # Age of Oldest Human - Numeric
+            "https://www.metaculus.com/questions/22427/number-of-new-leading-ai-labs/",  # Number of New Leading AI Labs - Multiple Choice
+            "https://www.metaculus.com/c/diffusion-community/38880/how-many-us-labor-strikes-due-to-ai-in-2029/",  # Number of US Labor Strikes Due to AI in 2029 - Discrete
         ]
         template_bot.skip_previously_forecasted_questions = False
         questions = [
