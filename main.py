@@ -4,8 +4,9 @@ import logging
 from datetime import datetime
 from typing import Literal
 from duckduckgo_search import DDGS
-ddgs = DDGS()
-
+ddgs = DDGS() 
+#Using DuckDuckGo search as a free alternative to the ":online" integrated search that comes pre-baked with openrouter. Works with the ANY model you specify as "researcher". DDGS is a bit fragile and if you have it search too many times at once,
+#it'll set off bot detection and screw up your results. It's pretty slow, but it's free so... ¯\_(ツ)_/¯ 
 def search_internet(query: str, max_results: int = 5):
     try:
         results = ddgs.text(query, max_results=max_results)
@@ -33,7 +34,7 @@ async def get_combined_response_openrouter(prompt: str, query: str, model: str):
     )
     response = await llm.invoke(full_prompt)
     return response
-
+#Main bulk of the DDGS integration, but there is a bit more below^
 from forecasting_tools import (
     AskNewsSearcher,
     BinaryQuestion,
@@ -52,7 +53,7 @@ from forecasting_tools import (
     clean_indents,
     structure_output,
 )
-
+#none of these are implemented ^
 logger = logging.getLogger(__name__)
 
 
@@ -60,7 +61,7 @@ class FallTemplateBot2025(ForecastBot):
 
 
     _max_concurrent_questions = (
-        1  # Set this to whatever works for your search-provider/ai-model rate limits
+        1  # Because of Duckduck go bot detection, leave at 1
     )
     _concurrency_limiter = asyncio.Semaphore(_max_concurrent_questions)
 
@@ -119,6 +120,7 @@ class FallTemplateBot2025(ForecastBot):
                 research = await searcher.invoke(prompt)
             elif not researcher or researcher == "None":
                 research = ""
+            #This is the main research setup, loops 3 times (or whatever number you can make it that DOESN'T set off DDGS bot detection) and condences the research at the end to get a (hopefully) broader search than if you used only one research bot.
             else:
                 research_results = []
                 for _ in range(3):
@@ -342,8 +344,7 @@ if __name__ == "__main__":
         level=logging.INFO,
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
-
-    # Suppress LiteLLM logging
+#Keeps the log file free of warnings that aren't relevent and don't impact the bot in any way.
     litellm_logger = logging.getLogger("LiteLLM")
     litellm_logger.setLevel(logging.WARNING)
     litellm_logger.propagate = False
@@ -384,11 +385,10 @@ if __name__ == "__main__":
                  allowed_tries=2,
              ),
              "summarizer": "openrouter/openai/gpt-oss-20b",
-             "researcher": "openrouter/openai/gpt-oss-120b",
+             "researcher": "openrouter/openai/gpt-oss-120b", #GPT-oss 120b is actually designed to use DDGS with ollama, I "retrofit" the ollama search code to allow for openrouter models. 
              "parser": "openrouter/qwen/qwen3-coder",
          },
     )         
-    #ballin
     if run_mode == "tournament":
         seasonal_tournament_reports = asyncio.run(
             template_bot.forecast_on_tournament(
@@ -402,8 +402,6 @@ if __name__ == "__main__":
         )
         forecast_reports = seasonal_tournament_reports + minibench_reports
     elif run_mode == "metaculus_cup":
-        # The Metaculus cup is a good way to test the bot's performance on regularly open questions. You can also use AXC_2025_TOURNAMENT_ID = 32564 or AI_2027_TOURNAMENT_ID = "ai-2027"
-        # The Metaculus cup may not be initialized near the beginning of a season (i.e. January, May, September)
         template_bot.skip_previously_forecasted_questions = False
         forecast_reports = asyncio.run(
             template_bot.forecast_on_tournament(
@@ -412,15 +410,12 @@ if __name__ == "__main__":
         )
     elif run_mode == "market_pulse":
         MP25Q3_TOURNAMENT_ID = 32773
-     # The Metaculus cup is a good way to test the bot's performance on regularly open questions. You can also use AXC_2025_TOURNAMENT_ID = 32564 or AI_2027_TOURNAMENT_ID = "ai-2027"
-     # The Metaculus cup may not be initialized near the beginning of a season (i.e. January, May, September)
         forecast_reports = asyncio.run(
             template_bot.forecast_on_tournament(
                 MP25Q3_TOURNAMENT_ID, return_exceptions=True
             )
         )       
     elif run_mode == "test_questions":
-        # Example questions are a good way to test the bot's performance on a single question
         EXAMPLE_QUESTIONS = [
             "https://www.metaculus.com/questions/578/human-extinction-by-2100/",  # Human Extinction - Binary
             #"https://www.metaculus.com/questions/14333/age-of-oldest-human-as-of-2100/",  # Age of Oldest Human - Numeric
