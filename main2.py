@@ -3,7 +3,38 @@ import asyncio
 import logging
 from datetime import datetime
 from typing import Literal
+from duckduckgo_search import DDGS
+ddgs = DDGS() 
+#Using DuckDuckGo search as a free alternative to the ":online" integrated search that comes pre-baked with openrouter. Works with the ANY model you specify as "researcher". DDGS is a bit fragile and if you have it search too many times at once,
+#it'll set off bot detection and screw up your results. It's pretty slow, but it's free so... ¯\_(ツ)_/¯ 
+def search_internet(query: str, max_results: int = 10):
+    try:
+        results = ddgs.text(query, max_results=max_results)
+        filtered_results = [result for result in results if 'body' in result]
+        return filtered_results
+    except Exception as e:
+        print(f"Error searching internet: {e}")
+        return []
 
+async def get_combined_response_openrouter(prompt: str, query: str, model: str):
+    search_results = search_internet(query)
+    search_content = "\n".join([result['body'] for result in search_results])
+
+    full_prompt = f"""{prompt}
+
+    Additional Internet Search Results:
+    {search_content}
+    """
+
+    llm = GeneralLlm(
+        model=model,
+        temperature=0.2,
+        timeout=40,
+        allowed_tries=2,
+    )
+    response = await llm.invoke(full_prompt)
+    return response
+#Main bulk of the DDGS integration, but there is a bit more below^
 from forecasting_tools import (
     AskNewsSearcher,
     BinaryQuestion,
@@ -22,7 +53,7 @@ from forecasting_tools import (
     clean_indents,
     structure_output,
 )
-
+#none of these are implemented ^
 logger = logging.getLogger(__name__)
 
 
@@ -30,7 +61,7 @@ class FallTemplateBot2025(ForecastBot):
 
 
     _max_concurrent_questions = (
-        2  # Set this to whatever works for your search-provider/ai-model rate limits
+        1  # Because of Duckduck go bot detection, leave at 1
     )
     _concurrency_limiter = asyncio.Semaphore(_max_concurrent_questions)
 
@@ -44,6 +75,7 @@ class FallTemplateBot2025(ForecastBot):
                 You are an assistant to a superforecaster.
                 The superforecaster will give you a question they intend to forecast on.
                 To be a great assistant, you generate a very detailed rundown of the most relevant news AND most relevent information from searches, including if the question would resolve Yes or No based on current information.
+                Try to diversify your sources, but also ensure that they are reputable.
                 You do not produce forecasts yourself.
 
                 Question:
@@ -88,13 +120,17 @@ class FallTemplateBot2025(ForecastBot):
                 research = await searcher.invoke(prompt)
             elif not researcher or researcher == "None":
                 research = ""
+            #This is the main research setup, loops 3 times (or whatever number you can make it that DOESN'T set off DDGS bot detection) and condences the research at the end to get a (hopefully) broader search than if you used only one research bot.
             else:
                 research_results = []
                 for _ in range(5):
-                    result = await self.get_llm("researcher", "llm").invoke(prompt) #Generates 5 "researcher"s that research individually, information is conjoined at the end.
+                    result = await get_combined_response_openrouter(
+                        prompt,
+                        question.question_text,
+                        model=self.get_llm("researcher")
+                    )
                     research_results.append(result)
                 research = "\n\n".join(research_results)
-                #research = await self.get_llm("researcher", "llm").invoke(prompt)
             logger.info(f"Found Research for URL {question.page_url}:\n{research}")
             return research
 
@@ -308,11 +344,12 @@ if __name__ == "__main__":
         level=logging.INFO,
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
-
-    # Suppress LiteLLM logging
+#Keeps the log file free of warnings that aren't relevent and don't impact the bot in any way.
     litellm_logger = logging.getLogger("LiteLLM")
     litellm_logger.setLevel(logging.WARNING)
     litellm_logger.propagate = False
+    logging.getLogger("openai.agents").setLevel(logging.ERROR)
+    logging.getLogger("forecasting_tools.ai_models.model_tracker").setLevel(logging.ERROR)
 
     parser = argparse.ArgumentParser(
         description="Run the Q1TemplateBot forecasting system"
@@ -342,17 +379,16 @@ if __name__ == "__main__":
         skip_previously_forecasted_questions=False,
          llms={  
                  "default": GeneralLlm(
-                 model="openrouter/openai/o3-mini-high",
+                 model="openrouter/deepseek/deepseek-r1-0528",
                  temperature=0.2,
                  timeout=40,
                  allowed_tries=2,
              ),
-             "summarizer": "openrouter/meta-llama/llama-4-scout",
-             "researcher": "openrouter/openai/gpt-4o-mini-search-preview:online",
+             "summarizer": "openrouter/openai/gpt-oss-20b",
+             "researcher": "openrouter/openai/gpt-oss-120b", #GPT-oss 120b is actually designed to use DDGS with ollama, I "retrofit" the ollama search code to allow for openrouter models. 
              "parser": "openrouter/qwen/qwen3-coder",
          },
     )         
-    #ballin
     if run_mode == "tournament":
         seasonal_tournament_reports = asyncio.run(
             template_bot.forecast_on_tournament(
@@ -366,8 +402,6 @@ if __name__ == "__main__":
         )
         forecast_reports = seasonal_tournament_reports + minibench_reports
     elif run_mode == "metaculus_cup":
-        # The Metaculus cup is a good way to test the bot's performance on regularly open questions. You can also use AXC_2025_TOURNAMENT_ID = 32564 or AI_2027_TOURNAMENT_ID = "ai-2027"
-        # The Metaculus cup may not be initialized near the beginning of a season (i.e. January, May, September)
         template_bot.skip_previously_forecasted_questions = False
         forecast_reports = asyncio.run(
             template_bot.forecast_on_tournament(
@@ -376,20 +410,17 @@ if __name__ == "__main__":
         )
     elif run_mode == "market_pulse":
         MP25Q3_TOURNAMENT_ID = 32773
-     # The Metaculus cup is a good way to test the bot's performance on regularly open questions. You can also use AXC_2025_TOURNAMENT_ID = 32564 or AI_2027_TOURNAMENT_ID = "ai-2027"
-     # The Metaculus cup may not be initialized near the beginning of a season (i.e. January, May, September)
         forecast_reports = asyncio.run(
             template_bot.forecast_on_tournament(
                 MP25Q3_TOURNAMENT_ID, return_exceptions=True
             )
         )       
     elif run_mode == "test_questions":
-        # Example questions are a good way to test the bot's performance on a single question
         EXAMPLE_QUESTIONS = [
             "https://www.metaculus.com/questions/578/human-extinction-by-2100/",  # Human Extinction - Binary
-            "https://www.metaculus.com/questions/14333/age-of-oldest-human-as-of-2100/",  # Age of Oldest Human - Numeric
-            "https://www.metaculus.com/questions/22427/number-of-new-leading-ai-labs/",  # Number of New Leading AI Labs - Multiple Choice
-            "https://www.metaculus.com/c/diffusion-community/38880/how-many-us-labor-strikes-due-to-ai-in-2029/",  # Number of US Labor Strikes Due to AI in 2029 - Discrete
+            #"https://www.metaculus.com/questions/14333/age-of-oldest-human-as-of-2100/",  # Age of Oldest Human - Numeric
+            #"https://www.metaculus.com/questions/22427/number-of-new-leading-ai-labs/",  # Number of New Leading AI Labs - Multiple Choice
+            #"https://www.metaculus.com/c/diffusion-community/38880/how-many-us-labor-strikes-due-to-ai-in-2029/",  # Number of US Labor Strikes Due to AI in 2029 - Discrete
         ]
         template_bot.skip_previously_forecasted_questions = False
         questions = [
