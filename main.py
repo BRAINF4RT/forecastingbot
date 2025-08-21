@@ -131,7 +131,7 @@ class Dingus(ForecastBot):
                         try:
                             result = await researcher_llm.invoke(combined_prompt)
                             break
-                            except Exception as e:
+                        except Exception as e:
                             wait = 2 ** attempt + random.uniform(0, 1)
                             logging.warning(
                                 f"researcher_llm.invoke failed (attempt {attempt+1}): {e}. Retrying in {wait:.2f}s..."
