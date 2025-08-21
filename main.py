@@ -12,6 +12,8 @@ import logging
 logging.getLogger("openai.agents").setLevel(logging.ERROR)
 
 import re
+import requests
+from bs4 import BeautifulSoup
 from duckduckgo_search import DDGS
 from datetime import datetime
 from typing import Literal
@@ -65,6 +67,30 @@ USER_AGENTS = [
     "Mozilla/5.0 (iPad; CPU OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1",
 ]
 
+def duckduckgo_fallback(query: str, max_results: int = 5) -> list[str]:
+    """Fallback: scrape DuckDuckGo HTML results if DDGS API fails."""
+    url = "https://duckduckgo.com/html/"
+    params = {"q": query}
+    headers = {"User-Agent": random.choice(USER_AGENTS)}
+
+    try:
+        resp = requests.get(url, params=params, headers=headers, timeout=10)
+        if resp.status_code != 200:
+            logging.error(f"Fallback search failed: HTTP {resp.status_code}")
+            return []
+
+        soup = BeautifulSoup(resp.text, "html.parser")
+        results = []
+        for a in soup.select(".result__snippet"):
+            results.append(a.get_text(strip=True))
+            if len(results) >= max_results:
+                break
+        return results
+
+    except Exception as e:
+        logging.error(f"Fallback DuckDuckGo scrape failed: {e}")
+        return []
+
 def search_internet(query: str, max_results: int = 10, retries: int = 5) -> str:
     for attempt in range(retries):
         try:
@@ -82,6 +108,10 @@ def search_internet(query: str, max_results: int = 10, retries: int = 5) -> str:
             time.sleep(wait)
 
     logging.error(f"All {retries} retries failed for search query: {query}")
+    logging.info(f"Trying DuckDuckGo HTML fallback for query: {query}")
+    results = duckduckgo_fallback(query, max_results)
+    if results:
+        return "\n".join(results)
     return ""
 
 class Dingus(ForecastBot):
