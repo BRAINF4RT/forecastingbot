@@ -64,7 +64,7 @@ class FallTemplateBot2025(ForecastBot):
 
 
     _max_concurrent_questions = (
-        2  # Set this to whatever works for your search-provider/ai-model rate limits
+        1  # Set this to whatever works for your search-provider/ai-model rate limits
     )
     _concurrency_limiter = asyncio.Semaphore(_max_concurrent_questions)
 
@@ -124,7 +124,7 @@ class FallTemplateBot2025(ForecastBot):
                 research = ""
             else:
                 research_results = []
-                for _ in range(5):
+                for _ in range(1):
                     result = await get_combined_response_openrouter(
                         prompt,
                         question.question_text,
@@ -424,9 +424,9 @@ if __name__ == "__main__":
         # Example questions are a good way to test the bot's performance on a single question
         EXAMPLE_QUESTIONS = [
             "https://www.metaculus.com/questions/578/human-extinction-by-2100/",  # Human Extinction - Binary
-            "https://www.metaculus.com/questions/14333/age-of-oldest-human-as-of-2100/",  # Age of Oldest Human - Numeric
-            "https://www.metaculus.com/questions/22427/number-of-new-leading-ai-labs/",  # Number of New Leading AI Labs - Multiple Choice
-            "https://www.metaculus.com/c/diffusion-community/38880/how-many-us-labor-strikes-due-to-ai-in-2029/",  # Number of US Labor Strikes Due to AI in 2029 - Discrete
+            #"https://www.metaculus.com/questions/14333/age-of-oldest-human-as-of-2100/",  # Age of Oldest Human - Numeric
+            #"https://www.metaculus.com/questions/22427/number-of-new-leading-ai-labs/",  # Number of New Leading AI Labs - Multiple Choice
+            #"https://www.metaculus.com/c/diffusion-community/38880/how-many-us-labor-strikes-due-to-ai-in-2029/",  # Number of US Labor Strikes Due to AI in 2029 - Discrete
         ]
         template_bot.skip_previously_forecasted_questions = False
         questions = [
