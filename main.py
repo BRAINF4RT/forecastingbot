@@ -56,17 +56,30 @@ def retry_with_backoff(func, max_retries=3, base_delay=1, max_delay=60):
             time.sleep(wait)
     raise RuntimeError(f"All {max_retries} retries failed for {func.__name__}")
 
-def search_internet(query, max_results=5):
-    def _do_search():
-        results = ddgs.text(query, max_results=max_results)
-        filtered_results = [result for result in results if 'body' in result]
-        return "\n".join([result['body'] for result in filtered_results])
+USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/117.0",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0 Safari/537.36",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0 Safari/537.36",
+]
 
-    try:
-        return retry_with_backoff(_do_search)  # ✅ Now defined
-    except Exception as e:
-        logging.error(f"Search failed for query '{query}': {e}")
-        return ""
+def search_internet(query: str, max_results: int = 10, retries: int = 5) -> str:
+    for attempt in range(retries):
+        try:
+            ua = random.choice(USER_AGENTS)
+            with DDGS(headers={"User-Agent": ua}) as ddgs:
+                results = [r["body"] for r in ddgs.text(query, max_results=max_results)]
+                if results:
+                    return "\n".join(results)
+
+        except Exception as e:
+            wait = 2 ** attempt + random.uniform(0, 1)
+            logging.warning(
+                f"Search attempt {attempt+1} for '{query}' failed: {e}. Retrying in {wait:.2f}s..."
+            )
+            time.sleep(wait)
+
+    logging.error(f"All {retries} retries failed for search query: {query}")
+    return ""
 
 class Dingus(ForecastBot):
 
