@@ -39,25 +39,23 @@ logger = logging.getLogger(__name__)
 
 ddgs = DDGS()
 
-def search_internet(query, max_results=10):
-    try:
+import time
+import random
+
+def search_internet(query, max_results=5):
+    def _do_search():
         results = ddgs.text(query, max_results=max_results)
-        snippets = []
-        for result in results:
-            body = result.get("body", "")
-            if not body:
-                continue
-            if "DDG.deep.anomalyDetectionBlock" in body:
-                continue
-            body = re.sub(r"<[^>]+>", "", body)
-            snippets.append(body.strip())
-        return "\n".join(snippets)
+        filtered_results = [result for result in results if 'body' in result]
+        return "\n".join([result['body'] for result in filtered_results])
+
+    try:
+        return retry_with_backoff(_do_search)
     except Exception as e:
-        print(f"Error searching internet: {e}")
+        logging.error(f"Search failed for query '{query}': {e}")
         return ""
 
-class FallTemplateBot2025(ForecastBot):
 
+class Dingus(ForecastBot):
 
     _max_concurrent_questions = (
         4  
@@ -124,11 +122,25 @@ class FallTemplateBot2025(ForecastBot):
 
                 research_results = []
                 for _ in range(5):
+
                     search_snippets = search_internet(question.question_text)
 
                     combined_prompt = prompt + f"\n\nRelevant Search Results:\n{search_snippets}"
 
-                    result = await researcher_llm.invoke(combined_prompt)
+                    for attempt in range(3):
+                        try:
+                            result = await researcher_llm.invoke(combined_prompt)
+                            break
+                            except Exception as e:
+                            wait = 2 ** attempt + random.uniform(0, 1)
+                            logging.warning(
+                                f"researcher_llm.invoke failed (attempt {attempt+1}): {e}. Retrying in {wait:.2f}s..."
+                            )
+                            await asyncio.sleep(wait)
+                    else:
+                        logging.error("All retries failed for researcher_llm.invoke")
+                        result = "Research step failed after retries."
+
                     research_results.append(result)
 
                 research = "\n\n".join(research_results)
@@ -377,7 +389,7 @@ if __name__ == "__main__":
         "market_pulse",
     ], "Invalid run mode"
 
-    template_bot = FallTemplateBot2025(
+    template_bot = Dingus(
         research_reports_per_question=2,
         predictions_per_research_report=5,
         use_research_summary_to_forecast=False,
