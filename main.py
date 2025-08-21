@@ -42,6 +42,20 @@ ddgs = DDGS()
 import time
 import random
 
+import time
+import random
+
+def retry_with_backoff(func, max_retries=3, base_delay=1, max_delay=60):
+    """Retries a sync function with exponential backoff."""
+    for attempt in range(max_retries):
+        try:
+            return func()
+        except Exception as e:
+            wait = min(base_delay * (2 ** attempt), max_delay) + random.uniform(0, 1)
+            logging.warning(f"Attempt {attempt+1} failed with error: {e}. Retrying in {wait:.2f}s...")
+            time.sleep(wait)
+    raise RuntimeError(f"All {max_retries} retries failed for {func.__name__}")
+
 def search_internet(query, max_results=5):
     def _do_search():
         results = ddgs.text(query, max_results=max_results)
@@ -49,11 +63,10 @@ def search_internet(query, max_results=5):
         return "\n".join([result['body'] for result in filtered_results])
 
     try:
-        return retry_with_backoff(_do_search)
+        return retry_with_backoff(_do_search)  # ✅ Now defined
     except Exception as e:
         logging.error(f"Search failed for query '{query}': {e}")
         return ""
-
 
 class Dingus(ForecastBot):
 
