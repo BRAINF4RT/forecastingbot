@@ -78,6 +78,7 @@ class FallTemplateBot2025(ForecastBot):
                 You are an assistant to a superforecaster.
                 The superforecaster will give you a question they intend to forecast on.
                 To be a great assistant, you generate a very detailed rundown of the most relevant news AND most relevent information from searches, including if the question would resolve Yes or No based on current information.
+                Try to diversify your sources, but also ensure that they are reputable.
                 You do not produce forecasts yourself.
 
                 Question:
@@ -124,7 +125,7 @@ class FallTemplateBot2025(ForecastBot):
                 research = ""
             else:
                 research_results = []
-                for _ in range(1):
+                for _ in range(2):
                     result = await get_combined_response_openrouter(
                         prompt,
                         question.question_text,
@@ -350,6 +351,8 @@ if __name__ == "__main__":
     litellm_logger = logging.getLogger("LiteLLM")
     litellm_logger.setLevel(logging.WARNING)
     litellm_logger.propagate = False
+    logging.getLogger("openai.agents").setLevel(logging.ERROR)
+    logging.getLogger("forecasting_tools.ai_models.model_tracker").setLevel(logging.ERROR)
 
     parser = argparse.ArgumentParser(
         description="Run the Q1TemplateBot forecasting system"
