@@ -91,7 +91,7 @@ def duckduckgo_fallback(query: str, max_results: int = 5) -> list[str]:
         logging.error(f"Fallback DuckDuckGo scrape failed: {e}")
         return []
 
-ef search_internet(query: str, max_results: int = 10, retries: int = 5) -> str:
+def search_internet(query: str, max_results: int = 10, retries: int = 5) -> str:
     """
     Perform a DuckDuckGo search with retries, backoff, jitter, and random UA rotation.
     Returns a string of combined search snippets.
