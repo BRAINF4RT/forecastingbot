@@ -135,9 +135,7 @@ class Dingus(ForecastBot):
 
                 research_results = []
                 for _ in range(5):
-
                     search_snippets = search_internet(question.question_text)
-
                     combined_prompt = prompt + f"\n\nRelevant Search Results:\n{search_snippets}"
 
                     for attempt in range(3):
@@ -155,6 +153,11 @@ class Dingus(ForecastBot):
                         result = "Research step failed after retries."
 
                     research_results.append(result)
+
+                    # 👇 add jitter here between searches
+                    jitter = random.uniform(1, 5)
+                    logging.info(f"Sleeping {jitter:.2f}s before next search to avoid rate limits...")
+                    await asyncio.sleep(jitter)
 
                 research = "\n\n".join(research_results)
 
