@@ -1,2 +1,2 @@
 "Error free?"
-Yeah I know, it didn't cost me anything to make a whole lotta errors.
+Yeah I know, it was COMPLETELY free to make a whole lotta errors.
