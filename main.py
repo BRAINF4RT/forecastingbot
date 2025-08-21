@@ -15,7 +15,7 @@ def search_internet(query: str, max_results: int = 10):
         return filtered_results
     except Exception as e:
         print(f"Error searching internet: {e}")
-        time.sleep(5)
+        #time.sleep(5)
         return []
 
 async def get_combined_response_openrouter(prompt: str, query: str, model: str):
@@ -122,7 +122,7 @@ class FallTemplateBot2025(ForecastBot):
                 research = await searcher.invoke(prompt)
             elif not researcher or researcher == "None":
                 research = ""
-            #This is the main research setup, loops 3 times (or whatever number you can make it that DOESN'T set off DDGS bot detection) and condences the research at the end to get a (hopefully) broader search than if you used only one research bot.
+            #This is the main research setup, loops 5 times (or whatever number you can make it that DOESN'T set off DDGS bot detection) and condences the research at the end to get a (hopefully) broader search than if you used only one research bot.
             else:
                 research_results = []
                 for _ in range(5):
@@ -132,6 +132,7 @@ class FallTemplateBot2025(ForecastBot):
                         model=self.get_llm("researcher")
                     )
                     research_results.append(result)
+                    await asyncio.sleep(3)
                 research = "\n\n".join(research_results)
             logger.info(f"Found Research for URL {question.page_url}:\n{research}")
             return research
