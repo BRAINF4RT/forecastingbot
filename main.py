@@ -137,7 +137,7 @@ ef search_internet(query: str, max_results: int = 10, retries: int = 5) -> str:
 class Dingus(ForecastBot):
 
     _max_concurrent_questions = (
-        4  
+        1  
     )
     _concurrency_limiter = asyncio.Semaphore(_max_concurrent_questions)
 
