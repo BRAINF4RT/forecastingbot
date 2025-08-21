@@ -379,7 +379,7 @@ if __name__ == "__main__":
         skip_previously_forecasted_questions=True,
          llms={  
                  "default": GeneralLlm(
-                 model="openrouter/deepseek/deepseek-r1",
+                 model="openrouter/openai/o3-high",
                  temperature=0.2,
                  timeout=40,
                  allowed_tries=2,
