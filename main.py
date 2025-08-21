@@ -16,10 +16,6 @@ def search_internet(query: str, max_results: int = 5):
         return []
 
 async def get_combined_response_openrouter(prompt: str, query: str, model: str):
-    """
-    Takes the forecast research prompt, adds DuckDuckGo search snippets,
-    and asks the researcher LLM for a summary.
-    """
     search_results = search_internet(query)
     search_content = "\n".join([result['body'] for result in search_results])
 
@@ -125,7 +121,7 @@ class FallTemplateBot2025(ForecastBot):
                 research = ""
             else:
                 research_results = []
-                for _ in range(2):
+                for _ in range(3):
                     result = await get_combined_response_openrouter(
                         prompt,
                         question.question_text,
