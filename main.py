@@ -13,8 +13,9 @@ def search_internet(query: str, max_results: int = 5):
         return filtered_results
     except Exception as e:
         print(f"Error searching internet: {e}")
-        #time.sleep(5)
         return []
+    finally:
+        time.sleep(3)
 
 async def get_combined_response_openrouter(prompt: str, query: str, model: str):
     search_results = search_internet(query)
