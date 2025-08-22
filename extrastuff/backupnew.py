@@ -74,9 +74,13 @@ class FallTemplateBot2025(ForecastBot):
                 f"""
                 You are an assistant to a superforecaster.
                 The superforecaster will give you a question they intend to forecast on.
-                To be a great assistant, you generate a very detailed rundown of the most relevant news AND most relevent information from searches, including if the question would resolve Yes or No based on current information.
+                To be a great assistant, you generate a very detailed rundown of:
+                1. The most relevant news and most relevant information from searches. 
+                2. Historical precedents: past events, case studies, or reference classes that are related to this question. 
+                   - Identify how often similar events have occurred in the past.
+                   - Highlight similarities and differences between past cases and the present one.
                 Try to diversify your sources, but also ensure that they are reputable.
-                You do not produce forecasts yourself.
+                Tell the forecaster what YOU think the question will resolve as and why, however you do not produce forecasts yourself.
 
                 Question:
                 {question.question_text}
@@ -167,6 +171,7 @@ class FallTemplateBot2025(ForecastBot):
             (d) A brief description of a scenario that results in a Yes outcome.
 
             You write your rationale remembering that good forecasters put extra weight on the status quo outcome since the world changes slowly most of the time.
+            Keep in mind that if you put extra weight on a prediction and your prediction is correct, you will score better. However if your prediction is wrong, you will be penalised harder for adding that confidence.
 
             The last thing you write is your final answer as: "Probability: ZZ%", 0-100
             """
@@ -215,6 +220,7 @@ class FallTemplateBot2025(ForecastBot):
             (c) A description of an scenario that results in an unexpected outcome.
 
             You write your rationale remembering that (1) good forecasters put extra weight on the status quo outcome since the world changes slowly most of the time, and (2) good forecasters leave some moderate probability on most options to account for unexpected outcomes.
+            Keep in mind that if you put extra weight on a prediction and your prediction is correct, you will score better. However if your prediction is wrong, you will be penalised harder for adding that confidence.
 
             The last thing you write is your final probabilities for the N options in this order {question.options} as:
             Option_A: Probability_A
@@ -289,6 +295,7 @@ class FallTemplateBot2025(ForecastBot):
             (f) A brief description of an unexpected scenario that results in a high outcome.
 
             You remind yourself that good forecasters are humble and set wide 90/10 confidence intervals to account for unknown unknowns.
+            Keep in mind that if you put extra weight on a prediction and your prediction is correct, you will score better. However if your prediction is wrong, you will be penalised harder for adding that confidence.
 
             The last thing you write is your final answer as:
             "
