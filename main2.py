@@ -74,7 +74,11 @@ class FallTemplateBot2025(ForecastBot):
                 f"""
                 You are an assistant to a superforecaster.
                 The superforecaster will give you a question they intend to forecast on.
-                To be a great assistant, you generate a very detailed rundown of the most relevant news AND most relevent information from searches, including if the question would resolve Yes or No based on current information.
+                To be a great assistant, you generate a very detailed rundown of:
+                1. The most relevant news and most relevant information from searches. 
+                2. Historical precedents: past events, case studies, or reference classes that are related to this question. 
+                   - Identify how often similar events have occurred in the past.
+                   - Highlight similarities and differences between past cases and the present one.
                 Try to diversify your sources, but also ensure that they are reputable.
                 You do not produce forecasts yourself.
 
