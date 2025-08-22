@@ -1,12 +1,11 @@
 import argparse
 import asyncio
 import logging
+import time
 from datetime import datetime
 from typing import Literal
 from duckduckgo_search import DDGS
 ddgs = DDGS() 
-#Using DuckDuckGo search as a free alternative to the ":online" integrated search that comes pre-baked with openrouter. Works with the ANY model you specify as "researcher". DDGS is a bit fragile and if you have it search too many times at once,
-#it'll set off bot detection and screw up your results. It's pretty slow, but it's free so... ¯\_(ツ)_/¯ 
 def search_internet(query: str, max_results: int = 10):
     try:
         results = ddgs.text(query, max_results=max_results)
@@ -15,6 +14,8 @@ def search_internet(query: str, max_results: int = 10):
     except Exception as e:
         print(f"Error searching internet: {e}")
         return []
+    finally:
+        time.sleep(3)
 
 async def get_combined_response_openrouter(prompt: str, query: str, model: str):
     search_results = search_internet(query)
@@ -34,7 +35,7 @@ async def get_combined_response_openrouter(prompt: str, query: str, model: str):
     )
     response = await llm.invoke(full_prompt)
     return response
-#Main bulk of the DDGS integration, but there is a bit more below^
+
 from forecasting_tools import (
     AskNewsSearcher,
     BinaryQuestion,
@@ -53,15 +54,14 @@ from forecasting_tools import (
     clean_indents,
     structure_output,
 )
-#none of these are implemented ^
-logger = logging.getLogger(__name__)
 
+logger = logging.getLogger(__name__)
 
 class FallTemplateBot2025(ForecastBot):
 
 
     _max_concurrent_questions = (
-        1  # Because of Duckduck go bot detection, leave at 1
+        1  
     )
     _concurrency_limiter = asyncio.Semaphore(_max_concurrent_questions)
 
@@ -91,25 +91,25 @@ class FallTemplateBot2025(ForecastBot):
             if isinstance(researcher, GeneralLlm):
                 research = await researcher.invoke(prompt)
             elif researcher == "asknews/news-summaries":
-                research = await AskNewsSearcher().get_formatted_news_async( #not implemented
+                research = await AskNewsSearcher().get_formatted_news_async(
                     question.question_text
                 )
             elif researcher == "asknews/deep-research/medium-depth":
-                research = await AskNewsSearcher().get_formatted_deep_research( #not implemented
+                research = await AskNewsSearcher().get_formatted_deep_research(
                     question.question_text,
                     sources=["asknews", "google"],
                     search_depth=2,
                     max_depth=4,
                 )
             elif researcher == "asknews/deep-research/high-depth":
-                research = await AskNewsSearcher().get_formatted_deep_research( #not implemented
+                research = await AskNewsSearcher().get_formatted_deep_research( 
                     question.question_text,
                     sources=["asknews", "google"],
                     search_depth=4,
                     max_depth=6,
                 )
             elif researcher.startswith("smart-searcher"):
-                model_name = researcher.removeprefix("smart-searcher/") #not implemented
+                model_name = researcher.removeprefix("smart-searcher/") 
                 searcher = SmartSearcher(
                     model=model_name,
                     temperature=0,
@@ -120,7 +120,7 @@ class FallTemplateBot2025(ForecastBot):
                 research = await searcher.invoke(prompt)
             elif not researcher or researcher == "None":
                 research = ""
-            #This is the main research setup, loops 3 times (or whatever number you can make it that DOESN'T set off DDGS bot detection) and condences the research at the end to get a (hopefully) broader search than if you used only one research bot.
+            
             else:
                 research_results = []
                 for _ in range(5):
@@ -130,6 +130,7 @@ class FallTemplateBot2025(ForecastBot):
                         model=self.get_llm("researcher")
                     )
                     research_results.append(result)
+                    await asyncio.sleep(3)
                 research = "\n\n".join(research_results)
             logger.info(f"Found Research for URL {question.page_url}:\n{research}")
             return research
@@ -344,7 +345,7 @@ if __name__ == "__main__":
         level=logging.INFO,
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
-#Keeps the log file free of warnings that aren't relevent and don't impact the bot in any way.
+
     litellm_logger = logging.getLogger("LiteLLM")
     litellm_logger.setLevel(logging.WARNING)
     litellm_logger.propagate = False
@@ -385,7 +386,7 @@ if __name__ == "__main__":
                  allowed_tries=2,
              ),
              "summarizer": "openrouter/openai/gpt-oss-20b",
-             "researcher": "openrouter/openai/gpt-oss-120b", #GPT-oss 120b is actually designed to use DDGS with ollama, I "retrofit" the ollama search code to allow for openrouter models. 
+             "researcher": "openrouter/openai/gpt-oss-120b",  
              "parser": "openrouter/qwen/qwen3-coder",
          },
     )         
