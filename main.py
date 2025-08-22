@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Literal
 from duckduckgo_search import DDGS
 ddgs = DDGS() 
-def search_internet(query: str, max_results: int = 5):
+def search_internet(query: str, max_results: int = 10):
     try:
         results = ddgs.text(query, max_results=max_results)
         filtered_results = [result for result in results if 'body' in result]
