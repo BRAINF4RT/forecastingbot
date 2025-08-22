@@ -80,7 +80,7 @@ class FallTemplateBot2025(ForecastBot):
                    - Identify how often similar events have occurred in the past.
                    - Highlight similarities and differences between past cases and the present one.
                 Try to diversify your sources, but also ensure that they are reputable.
-                You do not produce forecasts yourself.
+                Tell the forecaster what YOU think the question will resolve as and why, however you do not produce forecasts yourself.
 
                 Question:
                 {question.question_text}
