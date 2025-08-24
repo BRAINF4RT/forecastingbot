@@ -159,7 +159,7 @@ class FallTemplateBot2025(ForecastBot):
             {question.fine_print}
 
 
-            Your research assistant says:
+            The compiled information of your five research assistants say:
             {research}
 
             Today is {datetime.now().strftime("%Y-%m-%d")}.
@@ -209,7 +209,7 @@ class FallTemplateBot2025(ForecastBot):
             {question.fine_print}
 
 
-            Your research assistant says:
+            The compiled information of your five research assistants say:
             {research}
 
             Today is {datetime.now().strftime("%Y-%m-%d")}.
@@ -273,7 +273,7 @@ class FallTemplateBot2025(ForecastBot):
 
             Units for answer: {question.unit_of_measure if question.unit_of_measure else "Not stated (please infer this)"}
 
-            Your research assistant says:
+            The compiled information of your five research assistants say:
             {research}
 
             Today is {datetime.now().strftime("%Y-%m-%d")}.
