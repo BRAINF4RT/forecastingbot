@@ -80,7 +80,7 @@ class FallTemplateBot2025(ForecastBot):
                    - Identify how often similar events have occurred in the past.
                    - Highlight similarities and differences between past cases and the present one.
                 Try to diversify your sources, but also ensure that they are reputable.
-                You do not produce forecasts yourself.
+                Tell the forecaster what YOU think the question will resolve as and why, however you do not produce forecasts yourself.
 
                 Question:
                 {question.question_text}
@@ -159,7 +159,7 @@ class FallTemplateBot2025(ForecastBot):
             {question.fine_print}
 
 
-            Your research assistant says:
+            The compiled information of your five research assistants says:
             {research}
 
             Today is {datetime.now().strftime("%Y-%m-%d")}.
@@ -171,6 +171,7 @@ class FallTemplateBot2025(ForecastBot):
             (d) A brief description of a scenario that results in a Yes outcome.
 
             You write your rationale remembering that good forecasters put extra weight on the status quo outcome since the world changes slowly most of the time.
+            Keep in mind that if you put extra weight on a prediction and your prediction is correct, you will score better. However if your prediction is wrong, you will be penalised harder for adding that confidence.
 
             The last thing you write is your final answer as: "Probability: ZZ%", 0-100
             """
@@ -208,7 +209,7 @@ class FallTemplateBot2025(ForecastBot):
             {question.fine_print}
 
 
-            Your research assistant says:
+            The compiled information of your five research assistants says:
             {research}
 
             Today is {datetime.now().strftime("%Y-%m-%d")}.
@@ -219,6 +220,7 @@ class FallTemplateBot2025(ForecastBot):
             (c) A description of an scenario that results in an unexpected outcome.
 
             You write your rationale remembering that (1) good forecasters put extra weight on the status quo outcome since the world changes slowly most of the time, and (2) good forecasters leave some moderate probability on most options to account for unexpected outcomes.
+            Keep in mind that if you put extra weight on a prediction and your prediction is correct, you will score better. However if your prediction is wrong, you will be penalised harder for adding that confidence.
 
             The last thing you write is your final probabilities for the N options in this order {question.options} as:
             Option_A: Probability_A
@@ -271,7 +273,7 @@ class FallTemplateBot2025(ForecastBot):
 
             Units for answer: {question.unit_of_measure if question.unit_of_measure else "Not stated (please infer this)"}
 
-            Your research assistant says:
+            The compiled information of your five research assistants says:
             {research}
 
             Today is {datetime.now().strftime("%Y-%m-%d")}.
@@ -293,6 +295,7 @@ class FallTemplateBot2025(ForecastBot):
             (f) A brief description of an unexpected scenario that results in a high outcome.
 
             You remind yourself that good forecasters are humble and set wide 90/10 confidence intervals to account for unknown unknowns.
+            Keep in mind that if you put extra weight on a prediction and your prediction is correct, you will score better. However if your prediction is wrong, you will be penalised harder for adding that confidence.
 
             The last thing you write is your final answer as:
             "
