@@ -196,7 +196,7 @@ def get_random_binary_prediction(question_details, num_runs: int):
 
 def get_random_numeric_prediction(question_details, num_runs: int):
     # Return a flat CDF of 201 values between 0 and 1
-    cdf = np.linspace(0.001, 0.999, 201).tolist()
+    cdf = np.linspace(0.001, 1, 201).tolist()
     return cdf, "Random chimp numeric forecast (uniform CDF)."
 
 def get_random_multiple_choice_prediction(question_details, num_runs: int):
