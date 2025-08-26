@@ -195,9 +195,12 @@ def get_random_binary_prediction(question_details, num_runs: int):
     return prob, f"Random chimp prediction: {prob:.2f}"
 
 def get_random_numeric_prediction(question_details, num_runs: int):
-    # Return a flat CDF of 201 values between 0 and 1
-    cdf = np.linspace(0.001, 1, 201).tolist()
-    return cdf, "Random chimp numeric forecast (uniform CDF)."
+    lower = question_details["numeric_lower_bound"]
+    upper = question_details["numeric_upper_bound"]
+    x_values = np.linspace(lower, upper, 201).tolist()
+    cdf = np.linspace(0.0, 1.0, 201).tolist()  # uniform CDF
+    forecast = [{"x": x, "cdf": p} for x, p in zip(x_values, cdf)]
+    return forecast, "Random chimp numeric forecast (uniform CDF)."
 
 def get_random_multiple_choice_prediction(question_details, num_runs: int):
     options = question_details["options"]
