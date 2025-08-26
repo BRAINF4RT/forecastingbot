@@ -17,7 +17,7 @@ USE_EXAMPLE_QUESTIONS = False  # set to True to forecast example questions rathe
 NUM_RUNS_PER_QUESTION = 5  # The median forecast is taken between NUM_RUNS_PER_QUESTION runs
 SKIP_PREVIOUSLY_FORECASTED_QUESTIONS = True
 
-METACULUS_TOKEN = os.getenv("METACULUS_KEY")
+METACULUS_KEY = os.getenv("METACULUS_KEY")
 
 # The tournament IDs below can be used for testing your bot.
 Q4_2024_AI_BENCHMARKING_ID = 32506
@@ -46,7 +46,7 @@ EXAMPLE_QUESTIONS = [  # (question_id, post_id)
 ######################### HELPER FUNCTIONS #########################
 
 # @title Helper functions
-AUTH_HEADERS = {"headers": {"Authorization": f"Token {METACULUS_TOKEN}"}}
+AUTH_HEADERS = {"headers": {"Authorization": f"Token {METACULUS_KEY}"}}
 API_BASE_URL = "https://www.metaculus.com/api"
 
 
