@@ -1,4 +1,4 @@
-name: Test Bot
+name: Test Chimp
 
 on:
   workflow_dispatch:
