@@ -43,4 +43,4 @@ jobs:
         # this reads the environment variables from the github repository.
         # Store under Settings --> Secrets and variables --> Actions
         env:
-          METACULUS_TOKEN: ${{ secrets.METACULUS_KEY }} # replace this with the name of the variable under which you stored your own Metaculus token
+          METACULUS_KEY: ${{ secrets.METACULUS_KEY }} # replace this with the name of the variable under which you stored your own Metaculus token
