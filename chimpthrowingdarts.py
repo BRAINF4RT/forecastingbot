@@ -195,12 +195,18 @@ def get_random_binary_prediction(question_details, num_runs: int):
     return prob, f"Random chimp prediction: {prob:.2f}"
 
 def get_random_numeric_prediction(question_details, num_runs: int):
-    lower = question_details["numeric_lower_bound"]
-    upper = question_details["numeric_upper_bound"]
+    # Safe defaults in case bounds are missing
+    lower = question_details.get("numeric_lower_bound", 0.0)
+    upper = question_details.get("numeric_upper_bound", 1.0)
+
     x_values = np.linspace(lower, upper, 201).tolist()
     cdf = np.linspace(0.0, 1.0, 201).tolist()  # uniform CDF
+
+    # Prepare payload as list of dicts
     forecast = [{"x": x, "cdf": p} for x, p in zip(x_values, cdf)]
+
     return forecast, "Random chimp numeric forecast (uniform CDF)."
+
 
 def get_random_multiple_choice_prediction(question_details, num_runs: int):
     options = question_details["options"]
