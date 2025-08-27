@@ -12,7 +12,6 @@ def search_internet(query: str, max_results: int = 10):
         filtered_results = [result for result in results if 'body' in result]
         return filtered_results
     except Exception as e:
-        print(f"Error searching internet: {e}")
         return []
     finally:
         time.sleep(3)
