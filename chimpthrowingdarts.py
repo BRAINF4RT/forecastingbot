@@ -199,14 +199,21 @@ def get_random_numeric_prediction(question_details, num_runs: int):
     lower = question_details.get("numeric_lower_bound", 0.0)
     upper = question_details.get("numeric_upper_bound", 1.0)
 
-    x_values = np.linspace(lower, upper, 201).tolist()
-    cdf = np.linspace(0.0, 1.0, 201).tolist()  # uniform CDF
+    # Generate evenly spaced points
+    x_values = np.linspace(lower, upper, 201)
+    cdf_values = np.linspace(0.0, 1.0, 201)
 
-    # Prepare payload as list of dicts
-    forecast = [{"x": x, "cdf": p} for x, p in zip(x_values, cdf)]
+    # Ensure floating point precision (avoids Metaculus "A valid number is required" errors)
+    x_values = [float(f"{x:.6f}") for x in x_values]
+    cdf_values = [float(f"{c:.6f}") for c in cdf_values]
+
+    # Format as payload that Metaculus API expects
+    forecast = {
+        "x": x_values,
+        "continuous_cdf": cdf_values
+    }
 
     return forecast, "Random chimp numeric forecast (uniform CDF)."
-
 
 def get_random_multiple_choice_prediction(question_details, num_runs: int):
     options = question_details["options"]
