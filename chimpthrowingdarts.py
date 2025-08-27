@@ -203,17 +203,11 @@ def get_random_numeric_prediction(question_details, num_runs: int):
     x_values = np.linspace(lower, upper, 201)
     cdf_values = np.linspace(0.0, 1.0, 201)
 
-    # Ensure floating point precision (avoids Metaculus "A valid number is required" errors)
-    x_values = [float(f"{x:.6f}") for x in x_values]
+    # Ensure floating point precision
     cdf_values = [float(f"{c:.6f}") for c in cdf_values]
 
-    # Format as payload that Metaculus API expects
-    forecast = {
-        "x": x_values,
-        "continuous_cdf": cdf_values
-    }
-
-    return forecast, "Random chimp numeric forecast (uniform CDF)."
+    # Just return the list of floats (Metaculus expects this)
+    return cdf_values, "Random chimp numeric forecast (uniform CDF)."
 
 def get_random_multiple_choice_prediction(question_details, num_runs: int):
     options = question_details["options"]
