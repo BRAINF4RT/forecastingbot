@@ -63,7 +63,7 @@ async def generate_search_query(question: MetaculusQuestion, model: str) -> str:
     """
 
     llm = GeneralLlm(
-        model="openrouter/openai/gpt-oss-20b",
+        model=model
         temperature=0.2,
         timeout=20,
         allowed_tries=2,
@@ -403,6 +403,7 @@ if __name__ == "__main__":
              "summarizer": "openrouter/openai/gpt-oss-20b",
              "researcher": "openrouter/openai/gpt-oss-120b",  
              "parser": "openrouter/openai/gpt-oss-20b",
+             "querier": "openrouter/openai/gpt-oss-20b",
          },
     )         
     if run_mode == "tournament":
