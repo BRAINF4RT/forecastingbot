@@ -4,6 +4,7 @@ import logging
 import time
 from datetime import datetime
 from typing import Literal
+from __future__ import annotations
 from duckduckgo_search import DDGS
 ddgs = DDGS() 
 def search_internet(query: str, max_results: int = 50, batch_size: int = 5):
