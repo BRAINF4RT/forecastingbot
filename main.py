@@ -58,9 +58,7 @@ async def generate_search_query(question: MetaculusQuestion, model: str) -> str:
     {question.fine_print}
 
     Rules for the query:
-    - Make it short (MAX 15 words).
-    - Focus on the key entities, dates, and outcome.
-    - Add words like "news", "forecast", "polls", "recent", or "update" if useful.
+    - Make it very short (MAX 25 words).
     - Do not return a sentence or explanation — return ONLY the final search query.
     """
 
