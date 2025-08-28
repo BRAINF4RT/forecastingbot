@@ -8,26 +8,32 @@ from typing import Literal
 from duckduckgo_search import DDGS
 ddgs = DDGS()
 
-def search_internet(query: str, max_results: int = 50, batch_size: int = 5):
+def search_internet(query: str, max_results: int = 50, batch_size: int = 10):
     all_results = []
     seen_urls = set()
-    modifiers = [" future", " recent", " analysis", " report", " news", " study", " trend", " update", "data", " stat",]
+    modifiers = [
+        " future", " recent", " analysis", " report", " news", 
+        " study", " trend", " update", " data", " statistics", 
+        " forecast", " outlook", " prediction", " review", " current"
+    ]
     try:
         while len(all_results) < max_results:
-            modifier = random.choice(modifiers)
-            var_query = f"{query} {modifier}"
-            results = ddgs.text(var_query, max_results=batch_size)
+            results = []
+            for _ in range(batch_size):
+                modifier = random.choice(modifiers)
+                var_query = f"{query} {modifier}"
+                results.extend(ddgs.text(var_query, max_results=1))
             for r in results:
                 if "body" in r and r["href"] not in seen_urls:
                     all_results.append(r)
                     seen_urls.add(r["href"])
             if not results or len(results) == 0:
-                break
+                continue
             time.sleep(1)
         return all_results[:max_results]
     except Exception as e:
         return all_results
-
+        
 from forecasting_tools import (
     AskNewsSearcher,
     BinaryQuestion,
