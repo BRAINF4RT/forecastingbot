@@ -393,7 +393,7 @@ if __name__ == "__main__":
              ),
              "summarizer": "openrouter/openai/gpt-oss-20b",
              "researcher": "openrouter/openai/gpt-oss-120b",  
-             "parser": "openrouter/qwen/qwen3-coder",
+             "parser": "openrouter/openai/gpt-oss-20b",
          },
     )         
     if run_mode == "tournament":
