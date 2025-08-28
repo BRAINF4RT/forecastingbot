@@ -20,6 +20,7 @@ def search_internet(query: str, max_results: int = 50):
         modifier = random.choice(modifiers)
         var_query = f"{query} {modifier}"
         results = ddgs.text(var_query, max_results=10) 
+        time.sleep(2)
         if not results:
             continue
         for r in results:
