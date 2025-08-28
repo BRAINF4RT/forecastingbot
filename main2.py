@@ -162,7 +162,7 @@ class FallTemplateBot2025(ForecastBot):
                 research = ""
             else:
                 research_results = []
-                for _ in range(3):
+                for _ in range(5):
                     search_query = await generate_search_query(question, model=self.get_llm("querier"))
                     logger.info(f"Using search query for question {question.page_url}: {search_query}")
                     result = await get_combined_response_openrouter(
