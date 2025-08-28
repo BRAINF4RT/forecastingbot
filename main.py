@@ -8,7 +8,7 @@ from typing import Literal
 from duckduckgo_search import DDGS
 ddgs = DDGS()
 
-def search_internet(query: str, max_results: int = 50, batch_size: int = 20):
+async def search_internet(query: str, max_results: int = 50, batch_size: int = 5):
     all_results = []
     seen_urls = set()
     modifiers = [
@@ -16,23 +16,26 @@ def search_internet(query: str, max_results: int = 50, batch_size: int = 20):
         " study", " trend", " update", " data", " statistics",
         " forecast", " outlook", " prediction", " review", " current"
     ]
-    try:
-        while len(all_results) < max_results:
-            modifier = random.choice(modifiers)
-            var_query = f"{query} {modifier}"
+    random.shuffle(modifiers)
+    modifier_cycle = itertools.cycle(modifiers)
+    delay = 1  
+    while len(all_results) < max_results:
+        modifier = next(modifier_cycle)
+        var_query = f"{query} {modifier}"
+        try:
             results = ddgs.text(var_query, max_results=batch_size)
             for r in results:
                 if "body" in r and r["href"] not in seen_urls:
                     all_results.append(r)
                     seen_urls.add(r["href"])
-
                 if len(all_results) >= max_results:
                     break
-            time.sleep(1)
-        return all_results[:max_results]
-    except Exception as e:
-        logger.warning(f"Error during search: {e}")
-        return all_results
+            await asyncio.sleep(delay)
+        except Exception as e:
+            logger.warning(f"Search error: {e}, backing off {delay*2}s")
+            await asyncio.sleep(delay)
+            delay = min(delay * 2, 60)
+    return all_results[:max_results]
 
 from forecasting_tools import (
     AskNewsSearcher,
