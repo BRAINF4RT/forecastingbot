@@ -15,7 +15,7 @@ def search_internet(query: str, max_results: int = 50, batch_size: int = 10):
     " future", " recent", " upcoming", " historical", " past", " current events", " trending", " latest", " updated", " ongoing",
     " analysis", " report", " news", " study", " review", " case study", " briefing", " summary", " editorial", " research paper",
     " statistics", " data", " forecast", " outlook", " prediction", " model", " evaluation", " benchmark", " scenario analysis", " risk assessment",
-    " global", " regional", " national", " US", " Europe", " Asia", " local", " international", " city-level", " country-level",
+    " global", " regional", " national", " local", " international", " city-level", " country-level",
     " expert opinion", " commentary", " insights", " perspective", " thought leadership", " critique", " prediction market",
     " update", " trend", " overview", " highlights", " summary report", " report card", " key findings", " key metrics", " notable events", " implications",
     ]
