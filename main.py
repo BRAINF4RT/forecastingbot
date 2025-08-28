@@ -63,7 +63,7 @@ async def generate_search_query(question: MetaculusQuestion, model: str) -> str:
     """
 
     llm = GeneralLlm(
-        model=model
+        model=model,
         temperature=0.2,
         timeout=20,
         allowed_tries=2,
