@@ -3,40 +3,38 @@ import asyncio
 import logging
 import time
 import random
-import itertools
 from datetime import datetime
 from typing import Literal
 from duckduckgo_search import DDGS
 ddgs = DDGS()
 
-async def search_internet(query: str, max_results: int = 50, batch_size: int = 5):
+def search_internet(query: str, max_results: int = 50, attempts_per_query: int = 5):
     all_results = []
     seen_urls = set()
     modifiers = [
-        " future", " recent", " analysis", " report", " news",
-        " study", " trend", " update", " data", " statistics",
+        " future", " recent", " analysis", " report", " news", 
+        " study", " trend", " update", " data", " statistics", 
         " forecast", " outlook", " prediction", " review", " current"
     ]
-    random.shuffle(modifiers)
-    modifier_cycle = itertools.cycle(modifiers)
-    delay = 1  
-    while len(all_results) < max_results:
-        modifier = next(modifier_cycle)
-        var_query = f"{query} {modifier}"
-        try:
-            results = ddgs.text(var_query, max_results=batch_size)
-            for r in results:
-                if "body" in r and r["href"] not in seen_urls:
-                    all_results.append(r)
-                    seen_urls.add(r["href"])
+    try:
+        while len(all_results) < max_results:
+            for _ in range(attempts_per_query):
+                modifier = random.choice(modifiers)
+                var_query = f"{query} {modifier}"
+                results = ddgs.text(var_query, max_results=1)
+                for r in results:
+                    if "body" in r and r["href"] not in seen_urls:
+                        all_results.append(r)
+                        seen_urls.add(r["href"])
                 if len(all_results) >= max_results:
                     break
-            await asyncio.sleep(delay)
-        except Exception as e:
-            logger.warning(f"Search error: {e}, backing off {delay*2}s")
-            await asyncio.sleep(delay)
-            delay = min(delay * 2, 60)
-    return all_results[:max_results]
+                time.sleep(1)
+            if not results or len(results) == 0:
+                break
+        return all_results[:max_results]
+    except Exception as e:
+        return all_results
+
 
 from forecasting_tools import (
     AskNewsSearcher,
@@ -92,9 +90,11 @@ async def generate_search_query(question: MetaculusQuestion, model: str) -> str:
     return query
 
 async def get_combined_response_openrouter(prompt: str, query: str, model: str):
-    search_results = await search_internet(query, max_results=50)
+    search_results = search_internet(query)
     search_content = "\n".join([result['body'] for result in search_results])
+
     full_prompt = f"""{prompt}
+
     Additional Internet Search Results:
     {search_content}
     """
@@ -108,7 +108,9 @@ async def get_combined_response_openrouter(prompt: str, query: str, model: str):
     response = await llm.invoke(full_prompt)
     return response
 
+
 class FallTemplateBot2025(ForecastBot):
+
 
     _max_concurrent_questions = (
         1  
@@ -407,7 +409,7 @@ if __name__ == "__main__":
         use_research_summary_to_forecast=False,
         publish_reports_to_metaculus=True,
         folder_to_save_reports_to=None,
-        skip_previously_forecasted_questions=True,
+        skip_previously_forecasted_questions=False,
          llms={  
                  "default": GeneralLlm(
                  model="openrouter/deepseek/deepseek-r1-0528",
@@ -449,12 +451,12 @@ if __name__ == "__main__":
         )       
     elif run_mode == "test_questions":
         EXAMPLE_QUESTIONS = [
-            "https://www.metaculus.com/questions/39109/which-party-will-lead-tasmania/",
+            #"https://www.metaculus.com/questions/39109/which-party-will-lead-tasmania/",
             #"https://www.metaculus.com/questions/39110/practice-what-will-be-the-score-ratio-of-the-highest-performing-bot-compared-to-the-top-5-participants-in-the-summer-2025-metaculus-cup/",
             #"https://www.metaculus.com/questions/39056/practice-will-shigeru-ishiba-cease-to-be-prime-minister-of-japan-before-september-2025/",
             #"https://www.metaculus.com/questions/39055/community-prediction-of-this-question-divided-by-2/",
             #"https://www.metaculus.com/questions/578/human-extinction-by-2100/",  # Human Extinction - Binary
-            #"https://www.metaculus.com/questions/14333/age-of-oldest-human-as-of-2100/",  # Age of Oldest Human - Numeric
+            "https://www.metaculus.com/questions/14333/age-of-oldest-human-as-of-2100/",  # Age of Oldest Human - Numeric
             #"https://www.metaculus.com/questions/22427/number-of-new-leading-ai-labs/",  # Number of New Leading AI Labs - Multiple Choice
             #"https://www.metaculus.com/c/diffusion-community/38880/how-many-us-labor-strikes-due-to-ai-in-2029/",  # Number of US Labor Strikes Due to AI in 2029 - Discrete
         ]
