@@ -91,11 +91,9 @@ async def generate_search_query(question: MetaculusQuestion, model: str) -> str:
     return query
 
 async def get_combined_response_openrouter(prompt: str, query: str, model: str):
-    search_results = search_internet(query)
+    search_results = await search_internet(query, max_results=50)
     search_content = "\n".join([result['body'] for result in search_results])
-
     full_prompt = f"""{prompt}
-
     Additional Internet Search Results:
     {search_content}
     """
@@ -109,9 +107,7 @@ async def get_combined_response_openrouter(prompt: str, query: str, model: str):
     response = await llm.invoke(full_prompt)
     return response
 
-
 class FallTemplateBot2025(ForecastBot):
-
 
     _max_concurrent_questions = (
         1  
@@ -453,9 +449,9 @@ if __name__ == "__main__":
     elif run_mode == "test_questions":
         EXAMPLE_QUESTIONS = [
             "https://www.metaculus.com/questions/39109/which-party-will-lead-tasmania/",
-            "https://www.metaculus.com/questions/39110/practice-what-will-be-the-score-ratio-of-the-highest-performing-bot-compared-to-the-top-5-participants-in-the-summer-2025-metaculus-cup/",
-            "https://www.metaculus.com/questions/39056/practice-will-shigeru-ishiba-cease-to-be-prime-minister-of-japan-before-september-2025/",
-            "https://www.metaculus.com/questions/39055/community-prediction-of-this-question-divided-by-2/",
+            #"https://www.metaculus.com/questions/39110/practice-what-will-be-the-score-ratio-of-the-highest-performing-bot-compared-to-the-top-5-participants-in-the-summer-2025-metaculus-cup/",
+            #"https://www.metaculus.com/questions/39056/practice-will-shigeru-ishiba-cease-to-be-prime-minister-of-japan-before-september-2025/",
+            #"https://www.metaculus.com/questions/39055/community-prediction-of-this-question-divided-by-2/",
             #"https://www.metaculus.com/questions/578/human-extinction-by-2100/",  # Human Extinction - Binary
             #"https://www.metaculus.com/questions/14333/age-of-oldest-human-as-of-2100/",  # Age of Oldest Human - Numeric
             #"https://www.metaculus.com/questions/22427/number-of-new-leading-ai-labs/",  # Number of New Leading AI Labs - Multiple Choice
