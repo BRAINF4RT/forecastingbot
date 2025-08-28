@@ -41,12 +41,11 @@ logger = logging.getLogger(__name__)
 
 async def generate_search_query(question: MetaculusQuestion, model: str) -> str:
     prompt = f"""
-    You are a search query optimization assistant. 
+    You are an AI assistant tasked with generating concise, effective search queries for research.
 
-    The forecaster is researching a Metaculus prediction question. 
-    Your task is to turn the provided information into a concise, 
-    well-optimized search query that will help find the most relevant 
-    and recent information online.
+    Given a Metaculus prediction question, create a short search query (MAX 25 words) that captures the key
+    entities, relevant numbers, and concepts. Avoid copying the question word-for-word. Focus on what
+    someone would type in a search engine to find information that could help answer the question.
 
     Question Title:
     {question.question_text}
@@ -54,12 +53,10 @@ async def generate_search_query(question: MetaculusQuestion, model: str) -> str:
     Resolution Criteria:
     {question.resolution_criteria}
 
-    Fine Print:
+    More info:
     {question.fine_print}
 
-    Rules for the query:
-    - Make it very short (MAX 25 words).
-    - Do not return a sentence or explanation — return ONLY the final search query.
+    Return ONLY the final search query.
     """
 
     llm = GeneralLlm(
