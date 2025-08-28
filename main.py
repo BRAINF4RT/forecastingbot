@@ -7,22 +7,29 @@ from typing import Literal
 from duckduckgo_search import DDGS
 ddgs = DDGS()
 
-def search_internet(query: str, max_results: int = 45, batch_size: int = 15):
+def search_internet(query: str, max_results: int = 40, batch_size: int = 10):
     all_results = []
     seen_urls = set()
+    variations = [
+        query,
+        query + " future",
+        query + " recent",
+        query + " analysis",
+        query + " ",
+    ]
     try:
-        for start in range(0, max_results, batch_size):
-            results = ddgs.text(query, max_results=batch_size)
-            for r in results:
-                if 'body' in r and r['href'] not in seen_urls:
-                    all_results.append(r)
-                    seen_urls.add(r['href'])
-            time.sleep(1)
-            if len(all_results) >= max_results:
-                break
+        for var_query in variations:
+            for start in range(0, max_results, batch_size):
+                results = ddgs.text(var_query, max_results=batch_size)
+                for r in results:
+                    if 'body' in r and r['href'] not in seen_urls:
+                        all_results.append(r)
+                        seen_urls.add(r['href'])
+                time.sleep(1) 
+                if len(all_results) >= max_results:
+                    return all_results[:max_results]
         return all_results[:max_results]
     except Exception as e:
-        print(f"Error during search: {e}")
         return []
 
 from forecasting_tools import (
