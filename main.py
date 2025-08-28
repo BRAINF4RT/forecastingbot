@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import argparse
 import asyncio
 import logging
@@ -19,6 +17,27 @@ def search_internet(query: str, max_results: int = 50, batch_size: int = 5):
         return all_results[:max_results]
     except Exception:
         return []
+
+from forecasting_tools import (
+    AskNewsSearcher,
+    BinaryQuestion,
+    ForecastBot,
+    GeneralLlm,
+    MetaculusApi,
+    MetaculusQuestion,
+    MultipleChoiceQuestion,
+    NumericDistribution,
+    NumericQuestion,
+    Percentile,
+    BinaryPrediction,
+    PredictedOptionList,
+    ReasonedPrediction,
+    SmartSearcher,
+    clean_indents,
+    structure_output,
+)
+
+logger = logging.getLogger(__name__)
 
 async def generate_search_query(question: MetaculusQuestion, model: str) -> str:
     prompt = f"""
@@ -52,7 +71,9 @@ async def generate_search_query(question: MetaculusQuestion, model: str) -> str:
         allowed_tries=2,
     )
     query = await llm.invoke(prompt)
-    return query.strip()
+    query = query.strip() 
+    logger.info(f"Generated search query for question {question.page_url}: {query}")
+    return query
 
 async def get_combined_response_openrouter(prompt: str, query: str, model: str):
     search_results = search_internet(query)
@@ -73,26 +94,6 @@ async def get_combined_response_openrouter(prompt: str, query: str, model: str):
     response = await llm.invoke(full_prompt)
     return response
 
-from forecasting_tools import (
-    AskNewsSearcher,
-    BinaryQuestion,
-    ForecastBot,
-    GeneralLlm,
-    MetaculusApi,
-    MetaculusQuestion,
-    MultipleChoiceQuestion,
-    NumericDistribution,
-    NumericQuestion,
-    Percentile,
-    BinaryPrediction,
-    PredictedOptionList,
-    ReasonedPrediction,
-    SmartSearcher,
-    clean_indents,
-    structure_output,
-)
-
-logger = logging.getLogger(__name__)
 
 class FallTemplateBot2025(ForecastBot):
 
@@ -403,7 +404,6 @@ if __name__ == "__main__":
              "summarizer": "openrouter/openai/gpt-oss-20b",
              "researcher": "openrouter/openai/gpt-oss-120b",  
              "parser": "openrouter/openai/gpt-oss-20b",
-             "querier": "openrouter/openai/gpt-oss-20b",
          },
     )         
     if run_mode == "tournament":
