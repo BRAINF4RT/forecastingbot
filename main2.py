@@ -2,38 +2,31 @@ import argparse
 import asyncio
 import logging
 import time
+import random
 from datetime import datetime
 from typing import Literal
 from duckduckgo_search import DDGS
-ddgs = DDGS() 
-def search_internet(query: str, max_results: int = 10):
+ddgs = DDGS()
+
+def search_internet(query: str, max_results: int = 50, batch_size: int = 5):
+    all_results = []
+    seen_urls = set()
+    modifiers = [" future", " recent", " analysis", " report", " news", " study", " trend", " update", "data", " stat",]
     try:
-        results = ddgs.text(query, max_results=max_results)
-        filtered_results = [result for result in results if 'body' in result]
-        return filtered_results
+        while len(all_results) < max_results:
+            modifier = random.choice(modifiers)
+            var_query = f"{query} {modifier}"
+            results = ddgs.text(var_query, max_results=batch_size)
+            for r in results:
+                if "body" in r and r["href"] not in seen_urls:
+                    all_results.append(r)
+                    seen_urls.add(r["href"])
+            if not results or len(results) == 0:
+                break
+            time.sleep(1)
+        return all_results[:max_results]
     except Exception as e:
-        return []
-    finally:
-        time.sleep(3)
-
-async def get_combined_response_openrouter(prompt: str, query: str, model: str):
-    search_results = search_internet(query)
-    search_content = "\n".join([result['body'] for result in search_results])
-
-    full_prompt = f"""{prompt}
-
-    Additional Internet Search Results:
-    {search_content}
-    """
-
-    llm = GeneralLlm(
-        model=model,
-        temperature=0.2,
-        timeout=40,
-        allowed_tries=2,
-    )
-    response = await llm.invoke(full_prompt)
-    return response
+        return all_results
 
 from forecasting_tools import (
     AskNewsSearcher,
@@ -55,6 +48,58 @@ from forecasting_tools import (
 )
 
 logger = logging.getLogger(__name__)
+
+async def generate_search_query(question: MetaculusQuestion, model: str) -> str:
+    prompt = f"""
+    You are an AI assistant tasked with generating concise, effective search queries for research.
+
+    Given a Metaculus prediction question, create a short search query (MAX 25 words) that captures the key
+    entities, relevant numbers, and concepts. Avoid copying the question word-for-word. Focus on what
+    someone would type in a search engine to find information that could help answer the question. Try to
+    avoid words in your output that could bring up irrelevent information.
+
+    Question Title:
+    {question.question_text}
+
+    Resolution Criteria:
+    {question.resolution_criteria}
+
+    More info:
+    {question.fine_print}
+
+    Return ONLY the final search query.
+    """
+
+    llm = GeneralLlm(
+        model=model,
+        temperature=0.2,
+        timeout=20,
+        allowed_tries=2,
+    )
+    query = await llm.invoke(prompt)
+    query = query.strip() 
+    logger.info(f"Generated search query for question {question.page_url}: {query}")
+    return query
+
+async def get_combined_response_openrouter(prompt: str, query: str, model: str):
+    search_results = search_internet(query)
+    search_content = "\n".join([result['body'] for result in search_results])
+
+    full_prompt = f"""{prompt}
+
+    Additional Internet Search Results:
+    {search_content}
+    """
+
+    llm = GeneralLlm(
+        model=model,
+        temperature=0.2,
+        timeout=40,
+        allowed_tries=2,
+    )
+    response = await llm.invoke(full_prompt)
+    return response
+
 
 class FallTemplateBot2025(ForecastBot):
 
@@ -80,6 +125,7 @@ class FallTemplateBot2025(ForecastBot):
                    - Highlight similarities and differences between past cases and the present one.
                 Try to diversify your sources, but also ensure that they are reputable.
                 Tell the forecaster what YOU think the question will resolve as and why, however you do not produce forecasts yourself.
+                Your output prioritises quality information and it can be as large as it needs to be, as long as it gets all the relevent information across.
 
                 Question:
                 {question.question_text}
@@ -93,51 +139,23 @@ class FallTemplateBot2025(ForecastBot):
 
             if isinstance(researcher, GeneralLlm):
                 research = await researcher.invoke(prompt)
-            elif researcher == "asknews/news-summaries":
-                research = await AskNewsSearcher().get_formatted_news_async(
-                    question.question_text
-                )
-            elif researcher == "asknews/deep-research/medium-depth":
-                research = await AskNewsSearcher().get_formatted_deep_research(
-                    question.question_text,
-                    sources=["asknews", "google"],
-                    search_depth=2,
-                    max_depth=4,
-                )
-            elif researcher == "asknews/deep-research/high-depth":
-                research = await AskNewsSearcher().get_formatted_deep_research( 
-                    question.question_text,
-                    sources=["asknews", "google"],
-                    search_depth=4,
-                    max_depth=6,
-                )
-            elif researcher.startswith("smart-searcher"):
-                model_name = researcher.removeprefix("smart-searcher/") 
-                searcher = SmartSearcher(
-                    model=model_name,
-                    temperature=0,
-                    num_searches_to_run=2,
-                    num_sites_per_search=10,
-                    use_advanced_filters=False,
-                )
-                research = await searcher.invoke(prompt)
             elif not researcher or researcher == "None":
                 research = ""
-            
             else:
                 research_results = []
-                for _ in range(5):
+                for _ in range(3):
+                    search_query = await generate_search_query(question, model=self.get_llm("querier"))
+                    logger.info(f"Using search query for question {question.page_url}: {search_query}")
                     result = await get_combined_response_openrouter(
                         prompt,
-                        question.question_text,
+                        search_query,
                         model=self.get_llm("researcher")
                     )
                     research_results.append(result)
                     await asyncio.sleep(3)
                 research = "\n\n".join(research_results)
-            logger.info(f"Found Research for URL {question.page_url}:\n{research}")
             return research
-
+            
     async def _run_forecast_on_binary(
         self, question: BinaryQuestion, research: str
     ) -> ReasonedPrediction[float]:
@@ -158,7 +176,7 @@ class FallTemplateBot2025(ForecastBot):
             {question.fine_print}
 
 
-            The compiled information of your five research assistants says:
+            The compiled information of your multiple research assistants says:
             {research}
 
             Today is {datetime.now().strftime("%Y-%m-%d")}.
@@ -208,7 +226,7 @@ class FallTemplateBot2025(ForecastBot):
             {question.fine_print}
 
 
-            The compiled information of your five research assistants says:
+            The compiled information of your multiple research assistants says:
             {research}
 
             Today is {datetime.now().strftime("%Y-%m-%d")}.
@@ -272,7 +290,7 @@ class FallTemplateBot2025(ForecastBot):
 
             Units for answer: {question.unit_of_measure if question.unit_of_measure else "Not stated (please infer this)"}
 
-            The compiled information of your five research assistants says:
+            The compiled information of your multiple research assistants says:
             {research}
 
             Today is {datetime.now().strftime("%Y-%m-%d")}.
@@ -394,6 +412,7 @@ if __name__ == "__main__":
              "summarizer": "openrouter/openai/gpt-oss-20b",
              "researcher": "openrouter/openai/gpt-oss-120b",  
              "parser": "openrouter/openai/gpt-oss-20b",
+             "querier": "openrouter/openai/gpt-oss-20b",
          },
     )         
     if run_mode == "tournament":
@@ -424,8 +443,12 @@ if __name__ == "__main__":
         )       
     elif run_mode == "test_questions":
         EXAMPLE_QUESTIONS = [
-            "https://www.metaculus.com/questions/578/human-extinction-by-2100/",  # Human Extinction - Binary
-            #"https://www.metaculus.com/questions/14333/age-of-oldest-human-as-of-2100/",  # Age of Oldest Human - Numeric
+            #"https://www.metaculus.com/questions/39109/which-party-will-lead-tasmania/",
+            #"https://www.metaculus.com/questions/39110/practice-what-will-be-the-score-ratio-of-the-highest-performing-bot-compared-to-the-top-5-participants-in-the-summer-2025-metaculus-cup/",
+            #"https://www.metaculus.com/questions/39056/practice-will-shigeru-ishiba-cease-to-be-prime-minister-of-japan-before-september-2025/",
+            #"https://www.metaculus.com/questions/39055/community-prediction-of-this-question-divided-by-2/",
+            #"https://www.metaculus.com/questions/578/human-extinction-by-2100/",  # Human Extinction - Binary
+            "https://www.metaculus.com/questions/14333/age-of-oldest-human-as-of-2100/",  # Age of Oldest Human - Numeric
             #"https://www.metaculus.com/questions/22427/number-of-new-leading-ai-labs/",  # Number of New Leading AI Labs - Multiple Choice
             #"https://www.metaculus.com/c/diffusion-community/38880/how-many-us-labor-strikes-due-to-ai-in-2029/",  # Number of US Labor Strikes Due to AI in 2029 - Discrete
         ]
