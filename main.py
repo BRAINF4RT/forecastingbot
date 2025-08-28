@@ -6,15 +6,17 @@ from datetime import datetime
 from typing import Literal
 from duckduckgo_search import DDGS
 ddgs = DDGS() 
-def search_internet(query: str, max_results: int = 10):
+def search_internet(query: str, max_results: int = 50, batch_size: int = 5):
+    all_results = []
     try:
-        results = ddgs.text(query, max_results=max_results)
-        filtered_results = [result for result in results if 'body' in result]
-        return filtered_results
-    except Exception as e:
+        for start in range(0, max_results, batch_size):
+            results = ddgs.text(query, max_results=batch_size)
+            filtered_results = [r for r in results if 'body' in r]
+            all_results.extend(filtered_results)
+            time.sleep(1)
+        return all_results[:max_results]
+    except Exception:
         return []
-    finally:
-        time.sleep(3)
 
 async def get_combined_response_openrouter(prompt: str, query: str, model: str):
     search_results = search_internet(query)
@@ -126,7 +128,7 @@ class FallTemplateBot2025(ForecastBot):
             
             else:
                 research_results = []
-                for _ in range(5):
+                for _ in range(3):
                     result = await get_combined_response_openrouter(
                         prompt,
                         question.question_text,
