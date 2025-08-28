@@ -135,17 +135,18 @@ class FallTemplateBot2025(ForecastBot):
             else:
                 research_results = []
                 for _ in range(3):
+                    search_query = await generate_search_query(question, model=self.get_llm("querier"))
+                    logger.info(f"Using search query for question {question.page_url}: {search_query}")
                     result = await get_combined_response_openrouter(
                         prompt,
-                        question.question_text,
+                        search_query,
                         model=self.get_llm("researcher")
                     )
                     research_results.append(result)
                     await asyncio.sleep(3)
                 research = "\n\n".join(research_results)
-            logger.info(f"Found Research for URL {question.page_url}:\n{research}")
             return research
-
+            
     async def _run_forecast_on_binary(
         self, question: BinaryQuestion, research: str
     ) -> ReasonedPrediction[float]:
