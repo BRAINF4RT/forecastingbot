@@ -8,30 +8,32 @@ from typing import Literal
 from duckduckgo_search import DDGS
 ddgs = DDGS()
 
-def search_internet(query: str, max_results: int = 50, attempts_per_query: int = 5):
+def search_internet(query: str, max_results: int = 50, batch_size: int = 5):
+    all_results = []
+    seen_urls = set()
+    modifiers = [
+        " future", " recent", " analysis", " report", " news", 
+        " study", " trend", " update", " data", " statistics", 
+        " forecast", " outlook", " prediction", " review", " current"
+    ]
     try:
-        all_results = []
-        seen_urls = set()
-        modifiers = [
-            " future", " recent", " analysis", " report", " news", 
-            " study", " trend", " update", " data", " statistics", 
-            " forecast", " outlook", " prediction", " review", " current"
-        ]
         while len(all_results) < max_results:
-            for _ in range(attempts_per_query):
+            results = []
+            for _ in range(batch_size):
                 modifier = random.choice(modifiers)
                 var_query = f"{query} {modifier}"
-                results = ddgs.text(var_query, max_results=1) or []
-                for r in results:
-                    if "body" in r and r["href"] not in seen_urls:
-                        all_results.append(r)
-                        seen_urls.add(r["href"])
-                time.sleep(1) 
+                results.extend(ddgs.text(var_query, max_results=1)) 
+            for r in results:
+                if "body" in r and r["href"] not in seen_urls:
+                    all_results.append(r)
+                    seen_urls.add(r["href"])
+            if not results or len(results) == 0:
+                break
+            time.sleep(1)
         return all_results[:max_results]
     except Exception as e:
-        logging.warning(f"Search failed for query '{query}': {e}")
-        return []
-
+        return all_results
+        
 from forecasting_tools import (
     AskNewsSearcher,
     BinaryQuestion,
@@ -449,10 +451,10 @@ if __name__ == "__main__":
         EXAMPLE_QUESTIONS = [
             #"https://www.metaculus.com/questions/39109/which-party-will-lead-tasmania/",
             #"https://www.metaculus.com/questions/39110/practice-what-will-be-the-score-ratio-of-the-highest-performing-bot-compared-to-the-top-5-participants-in-the-summer-2025-metaculus-cup/",
-            "https://www.metaculus.com/questions/39056/practice-will-shigeru-ishiba-cease-to-be-prime-minister-of-japan-before-september-2025/",
+            #"https://www.metaculus.com/questions/39056/practice-will-shigeru-ishiba-cease-to-be-prime-minister-of-japan-before-september-2025/",
             #"https://www.metaculus.com/questions/39055/community-prediction-of-this-question-divided-by-2/",
             #"https://www.metaculus.com/questions/578/human-extinction-by-2100/",  # Human Extinction - Binary
-            #"https://www.metaculus.com/questions/14333/age-of-oldest-human-as-of-2100/",  # Age of Oldest Human - Numeric
+            "https://www.metaculus.com/questions/14333/age-of-oldest-human-as-of-2100/",  # Age of Oldest Human - Numeric
             #"https://www.metaculus.com/questions/22427/number-of-new-leading-ai-labs/",  # Number of New Leading AI Labs - Multiple Choice
             #"https://www.metaculus.com/c/diffusion-community/38880/how-many-us-labor-strikes-due-to-ai-in-2029/",  # Number of US Labor Strikes Due to AI in 2029 - Discrete
         ]
