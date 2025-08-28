@@ -5,17 +5,24 @@ import time
 from datetime import datetime
 from typing import Literal
 from duckduckgo_search import DDGS
-ddgs = DDGS() 
-def search_internet(query: str, max_results: int = 50, batch_size: int = 5):
+ddgs = DDGS()
+
+def search_internet(query: str, max_results: int = 45, batch_size: int = 15):
     all_results = []
+    seen_urls = set()
     try:
         for start in range(0, max_results, batch_size):
             results = ddgs.text(query, max_results=batch_size)
-            filtered_results = [r for r in results if 'body' in r]
-            all_results.extend(filtered_results)
+            for r in results:
+                if 'body' in r and r['href'] not in seen_urls:
+                    all_results.append(r)
+                    seen_urls.add(r['href'])
             time.sleep(1)
+            if len(all_results) >= max_results:
+                break
         return all_results[:max_results]
-    except Exception:
+    except Exception as e:
+        print(f"Error during search: {e}")
         return []
 
 from forecasting_tools import (
