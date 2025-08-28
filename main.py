@@ -45,7 +45,8 @@ async def generate_search_query(question: MetaculusQuestion, model: str) -> str:
 
     Given a Metaculus prediction question, create a short search query (MAX 25 words) that captures the key
     entities, relevant numbers, and concepts. Avoid copying the question word-for-word. Focus on what
-    someone would type in a search engine to find information that could help answer the question.
+    someone would type in a search engine to find information that could help answer the question. Try to
+    avoid words in your output that could bring up irrelevent information.
 
     Question Title:
     {question.question_text}
