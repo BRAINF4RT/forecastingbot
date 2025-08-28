@@ -3,6 +3,7 @@ import asyncio
 import logging
 import time
 import random
+import itertools
 from datetime import datetime
 from typing import Literal
 from duckduckgo_search import DDGS
