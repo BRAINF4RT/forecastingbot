@@ -18,6 +18,40 @@ def search_internet(query: str, max_results: int = 50, batch_size: int = 5):
     except Exception:
         return []
 
+async def generate_search_query(question: MetaculusQuestion, model: str) -> str:
+    prompt = f"""
+    You are a search query optimization assistant. 
+
+    The forecaster is researching a Metaculus prediction question. 
+    Your task is to turn the provided information into a concise, 
+    well-optimized search query that will help find the most relevant 
+    and recent information online.
+
+    Question Title:
+    {question.question_text}
+
+    Resolution Criteria:
+    {question.resolution_criteria}
+
+    Fine Print:
+    {question.fine_print}
+
+    Rules for the query:
+    - Make it short (MAX 15 words).
+    - Focus on the key entities, dates, and outcome.
+    - Add words like "news", "forecast", "polls", "recent", or "update" if useful.
+    - Do not return a sentence or explanation — return ONLY the final search query.
+    """
+
+    llm = GeneralLlm(
+        model="openrouter/openai/gpt-oss-20b",
+        temperature=0.2,
+        timeout=20,
+        allowed_tries=2,
+    )
+    query = await llm.invoke(prompt)
+    return query.strip()
+
 async def get_combined_response_openrouter(prompt: str, query: str, model: str):
     search_results = search_internet(query)
     search_content = "\n".join([result['body'] for result in search_results])
@@ -95,37 +129,8 @@ class FallTemplateBot2025(ForecastBot):
 
             if isinstance(researcher, GeneralLlm):
                 research = await researcher.invoke(prompt)
-            elif researcher == "asknews/news-summaries":
-                research = await AskNewsSearcher().get_formatted_news_async(
-                    question.question_text
-                )
-            elif researcher == "asknews/deep-research/medium-depth":
-                research = await AskNewsSearcher().get_formatted_deep_research(
-                    question.question_text,
-                    sources=["asknews", "google"],
-                    search_depth=2,
-                    max_depth=4,
-                )
-            elif researcher == "asknews/deep-research/high-depth":
-                research = await AskNewsSearcher().get_formatted_deep_research( 
-                    question.question_text,
-                    sources=["asknews", "google"],
-                    search_depth=4,
-                    max_depth=6,
-                )
-            elif researcher.startswith("smart-searcher"):
-                model_name = researcher.removeprefix("smart-searcher/") 
-                searcher = SmartSearcher(
-                    model=model_name,
-                    temperature=0,
-                    num_searches_to_run=2,
-                    num_sites_per_search=10,
-                    use_advanced_filters=False,
-                )
-                research = await searcher.invoke(prompt)
             elif not researcher or researcher == "None":
                 research = ""
-            
             else:
                 research_results = []
                 for _ in range(3):
@@ -396,6 +401,7 @@ if __name__ == "__main__":
              "summarizer": "openrouter/openai/gpt-oss-20b",
              "researcher": "openrouter/openai/gpt-oss-120b",  
              "parser": "openrouter/openai/gpt-oss-20b",
+             "querier": "openrouter/openai/gpt-oss-20b",
          },
     )         
     if run_mode == "tournament":
