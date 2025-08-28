@@ -11,17 +11,22 @@ ddgs = DDGS()
 def search_internet(query: str, max_results: int = 50, batch_size: int = 10):
     all_results = []
     seen_urls = set()
-    modifiers = [
-        " future", " recent", " analysis", " report", " news", 
-        " study", " trend", " update", " data", " statistics", 
-        " forecast", " outlook", " prediction", " review", " current"
-    ]
+modifiers = [
+    " future", " recent", " upcoming", " historical", " past", " current events", " trending", " latest", " updated", " ongoing",
+    " analysis", " report", " news", " study", " review", " case study", " briefing", " summary", " editorial", " research paper",
+    " statistics", " data", " forecast", " outlook", " prediction", " model", " evaluation", " benchmark", " scenario analysis", " risk assessment",
+    " global", " regional", " national", " US", " Europe", " Asia", " local", " international", " city-level", " country-level",
+    " expert opinion", " commentary", " insights", " perspective", " thought leadership", " critique", " prediction market",
+    " update", " trend", " overview", " highlights", " summary report", " report card", " key findings", " key metrics", " notable events", " implications",
+]
     try:
         while len(all_results) < max_results:
             results = []
-            for _ in range(batch_size):
-                modifier = random.choice(modifiers)
-                var_query = f"{query} {modifier}"
+            batch_modifiers = modifiers.copy()
+            random.shuffle(batch_modifiers)
+            batch_modifiers = batch_modifiers[:batch_size]
+            for modifier in batch_modifiers:
+                var_query = f"{query}{modifier}"
                 results.extend(ddgs.text(var_query, max_results=1))
             for r in results:
                 if "body" in r and r["href"] not in seen_urls:
@@ -29,7 +34,7 @@ def search_internet(query: str, max_results: int = 50, batch_size: int = 10):
                     seen_urls.add(r["href"])
             if not results or len(results) == 0:
                 continue
-            time.sleep(1)
+            time.sleep(1) 
         return all_results[:max_results]
     except Exception as e:
         return all_results
