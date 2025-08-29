@@ -119,43 +119,15 @@ async def get_combined_response_openrouter(prompt: str, query: str, model: str):
     response = await llm.invoke(full_prompt)
     return response
 
+
 class FallTemplateBot2025(ForecastBot):
+
+
     _max_concurrent_questions = (
         1  
     )
     _concurrency_limiter = asyncio.Semaphore(_max_concurrent_questions)
-    
-    def _create_unified_explanation(
-    self,
-    question,
-    research_prediction_collections,
-    aggregated_prediction,
-    final_cost,
-    time_spent_in_minutes,
-) -> str:
-        summaries = []
-        rationales = []
-        for i, collection in enumerate(research_prediction_collections, start=1):
-            summaries.append(collection.research_summary or "")
-            rationales.append(self._format_forecaster_rationales(i, collection))
-        combined_summary = "\n".join(summaries)
-        combined_rationales = "\n".join(rationales)
-        explanation = clean_indents(
-            f"""
-            ¯\_(ツ)_/¯
-            *Question*: {question.question_text}
-            *Final Prediction*: {aggregated_prediction}
-            *Total Cost*: ${round(final_cost, 4)}
-            *Time Spent*: {round(time_spent_in_minutes, 2)} minutes
 
-            {combined_summary}
-
-            # FORECASTS
-            {combined_rationales}
-            """
-        )
-        return explanation
-        
     async def run_research(self, question: MetaculusQuestion) -> str:
         async with self._concurrency_limiter:
             research = ""
@@ -495,8 +467,8 @@ if __name__ == "__main__":
             #"https://www.metaculus.com/questions/39056/practice-will-shigeru-ishiba-cease-to-be-prime-minister-of-japan-before-september-2025/",
             #"https://www.metaculus.com/questions/39055/community-prediction-of-this-question-divided-by-2/",
             #"https://www.metaculus.com/questions/578/human-extinction-by-2100/",  # Human Extinction - Binary
-            #"https://www.metaculus.com/questions/14333/age-of-oldest-human-as-of-2100/",  # Age of Oldest Human - Numeric
-            "https://www.metaculus.com/questions/22427/number-of-new-leading-ai-labs/",  # Number of New Leading AI Labs - Multiple Choice
+            "https://www.metaculus.com/questions/14333/age-of-oldest-human-as-of-2100/",  # Age of Oldest Human - Numeric
+            #"https://www.metaculus.com/questions/22427/number-of-new-leading-ai-labs/",  # Number of New Leading AI Labs - Multiple Choice
             #"https://www.metaculus.com/c/diffusion-community/38880/how-many-us-labor-strikes-due-to-ai-in-2029/",  # Number of US Labor Strikes Due to AI in 2029 - Discrete
         ]
         template_bot.skip_previously_forecasted_questions = False
