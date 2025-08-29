@@ -6,6 +6,9 @@ import random
 from datetime import datetime
 from typing import Literal
 from duckduckgo_search import DDGS
+from forecasting_tools.forecast_bots.forecast_bot import ResearchWithPredictions
+from forecasting_tools.helpers.data_organizer import DataOrganizer
+from forecasting_tools.types import PredictionTypes
 ddgs = DDGS()
 
 def search_internet(query: str, max_results: int = 50, batch_size: int = 10):
