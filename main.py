@@ -133,28 +133,28 @@ class FallTemplateBot2025(ForecastBot):
     final_cost,
     time_spent_in_minutes,
 ) -> str:
-    summaries = []
-    rationales = []
-    for i, collection in enumerate(research_prediction_collections, start=1):
-        summaries.append(collection.research_summary or "")
-        rationales.append(self._format_forecaster_rationales(i, collection))
-    combined_summary = "\n".join(summaries)
-    combined_rationales = "\n".join(rationales)
-    explanation = clean_indents(
-        f"""
-        ¯\_(ツ)_/¯
-        *Question*: {question.question_text}
-        *Final Prediction*: {aggregated_prediction}
-        *Total Cost*: ${round(final_cost, 4)}
-        *Time Spent*: {round(time_spent_in_minutes, 2)} minutes
+        summaries = []
+        rationales = []
+        for i, collection in enumerate(research_prediction_collections, start=1):
+            summaries.append(collection.research_summary or "")
+            rationales.append(self._format_forecaster_rationales(i, collection))
+        combined_summary = "\n".join(summaries)
+        combined_rationales = "\n".join(rationales)
+        explanation = clean_indents(
+            f"""
+            ¯\_(ツ)_/¯
+            *Question*: {question.question_text}
+            *Final Prediction*: {aggregated_prediction}
+            *Total Cost*: ${round(final_cost, 4)}
+            *Time Spent*: {round(time_spent_in_minutes, 2)} minutes
 
-        {combined_summary}
+            {combined_summary}
 
-        # FORECASTS
-        {combined_rationales}
-        """
-    )
-    return explanation
+            # FORECASTS
+            {combined_rationales}
+            """
+        )
+        return explanation
         
     async def run_research(self, question: MetaculusQuestion) -> str:
         async with self._concurrency_limiter:
