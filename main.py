@@ -6,7 +6,7 @@ import random
 from datetime import datetime
 from typing import Literal
 from forecasting_tools.forecast_bots.forecast_bot import ResearchWithPredictions
-from forecasting_tools.helpers.data_helpers.data_organizer import DataOrganizer
+from forecasting_tools.helpers.data_organizer import DataOrganizer
 from forecasting_tools.types import PredictionTypes
 from duckduckgo_search import DDGS
 ddgs = DDGS()
