@@ -401,17 +401,18 @@ if __name__ == "__main__":
     parser.add_argument(
         "--mode",
         type=str,
-        choices=["tournament", "metaculus_cup", "test_questions", "market_pulse",],
+        choices=["tournament", "metaculus_cup", "test_questions", "market_pulse", "colombia_wage",],
         default="tournament",
         help="Specify the run mode (default: tournament)",
     )
     args = parser.parse_args()
-    run_mode: Literal["tournament", "metaculus_cup", "test_questions", "market_pulse",] = args.mode
+    run_mode: Literal["tournament", "metaculus_cup", "test_questions", "market_pulse", "colombia_wage",] = args.mode
     assert run_mode in [
         "tournament",
         "metaculus_cup",
         "test_questions",
         "market_pulse",
+        "colombia_wage",
     ], "Invalid run mode"
 
     template_bot = FallTemplateBot2025(
@@ -459,7 +460,19 @@ if __name__ == "__main__":
             template_bot.forecast_on_tournament(
                 MP25Q3_TOURNAMENT_ID, return_exceptions=True
             )
-        )       
+        )
+    elif run_mode == "colombia_wage":
+        QUESTION = [
+            "https://www.metaculus.com/questions/39330/what-will-be-the-percentage-increase-for-the-minimum-wage-in-colombia-for-2026/",
+        ]
+        template_bot.skip_previously_forecasted_questions = False
+        questions = [
+            MetaculusApi.get_question_by_url(question_url)
+            for question_url in QUESTION
+        ]
+        forecast_reports = asyncio.run(
+            template_bot.forecast_questions(questions, return_exceptions=True)
+        )
     elif run_mode == "test_questions":
         EXAMPLE_QUESTIONS = [
             #"https://www.metaculus.com/questions/39109/which-party-will-lead-tasmania/",
