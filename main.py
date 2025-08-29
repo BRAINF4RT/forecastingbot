@@ -5,10 +5,10 @@ import time
 import random
 from datetime import datetime
 from typing import Literal
-from duckduckgo_search import DDGS
 from forecasting_tools.forecast_bots.forecast_bot import ResearchWithPredictions
-from forecasting_tools.helpers.data_organizer import DataOrganizer
+from forecasting_tools.helpers.data_helpers.data_organizer import DataOrganizer
 from forecasting_tools.types import PredictionTypes
+from duckduckgo_search import DDGS
 ddgs = DDGS()
 
 def search_internet(query: str, max_results: int = 50, batch_size: int = 10):
@@ -122,10 +122,7 @@ async def get_combined_response_openrouter(prompt: str, query: str, model: str):
     response = await llm.invoke(full_prompt)
     return response
 
-
 class FallTemplateBot2025(ForecastBot):
-
-
     _max_concurrent_questions = (
         1  
     )
