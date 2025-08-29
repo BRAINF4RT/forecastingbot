@@ -5,9 +5,6 @@ import time
 import random
 from datetime import datetime
 from typing import Literal
-from forecasting_tools.forecast_bots.forecast_bot import ResearchWithPredictions
-from forecasting_tools.helpers.data_organizer import DataOrganizer
-from forecasting_tools.types import PredictionTypes
 from duckduckgo_search import DDGS
 ddgs = DDGS()
 
@@ -130,42 +127,38 @@ class FallTemplateBot2025(ForecastBot):
     
     def _create_unified_explanation(
         self,
-        question: MetaculusQuestion,
-        research_prediction_collections: list[ResearchWithPredictions],
-        aggregated_prediction: PredictionTypes,
-        final_cost: float,
-        time_spent_in_minutes: float,
+        question,
+        research_prediction_collections,
+        aggregated_prediction,
+        final_cost,
+        time_spent_in_minutes,
     ) -> str:
-        report_type = DataOrganizer.get_report_type_for_question_type(type(question))
-        all_summaries = []
-        all_forecaster_rationales = []
-        for i, collection in enumerate(research_prediction_collections):
-            summary = self._format_and_expand_research_summary(
-                i + 1, report_type, collection
+        summaries = []
+        rationales = []
+        for i, collection in enumerate(research_prediction_collections, start=1):
+            summaries.append(
+                self._format_and_expand_research_summary(i, None, collection)
             )
-            core_research_for_collection = self._format_main_research(i + 1, collection)
-            forecaster_rationales_for_collection = self._format_forecaster_rationales(
-                i + 1, collection
+            rationales.append(
+                self._format_forecaster_rationales(i, collection)
             )
-            all_summaries.append(summary)
-            all_forecaster_rationales.append(forecaster_rationales_for_collection)
-        combined_summaries = "\n".join(all_summaries)
-        combined_rationales = "\n".join(all_forecaster_rationales)
-        full_explanation_without_summary = clean_indents(
+        combined_summary = "\n".join(summaries)
+        combined_rationales = "\n".join(rationales)
+        explanation = clean_indents(
             f"""
-            # SUMMARY
+             ¯\_(ツ)_/¯
             *Question*: {question.question_text}
-            *Final Prediction*: {report_type.make_readable_prediction(aggregated_prediction)}
-            *Total Cost*: ${round(final_cost,4)}
+            *Final Prediction*: {aggregated_prediction}
+            *Total Cost*: ${round(final_cost, 4)}
             *Time Spent*: {round(time_spent_in_minutes, 2)} minutes
-
-            {combined_summaries}
+            
+            {combined_summary}
 
             # FORECASTS
             {combined_rationales}
             """
         )
-        return full_explanation_without_summary
+        return explanation
         
     async def run_research(self, question: MetaculusQuestion) -> str:
         async with self._concurrency_limiter:
