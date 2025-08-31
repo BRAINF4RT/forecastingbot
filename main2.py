@@ -146,6 +146,8 @@ class FallTemplateBot2025(ForecastBot):
                 Tell the forecaster what YOU think the question will resolve as and why, however you do not produce forecasts yourself.
                 Your output prioritises quality information and it can be as large as it needs to be, as long as it gets all the relevent information across.
 
+                Today is {datetime.now().strftime("%Y-%m-%d")}.
+                
                 Question:
                 {question.question_text}
 
