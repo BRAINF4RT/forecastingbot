@@ -143,6 +143,7 @@ class FallTemplateBot2025(ForecastBot):
                    - Identify how often similar events have occurred in the past.
                    - Highlight similarities and differences between past cases and the present one.
                 Try to diversify your sources, but also ensure that they are reputable.
+                Information gathered from community driven, informal social media platforms should be marginalized as they are more likely to hold misinformation.
                 Tell the forecaster what YOU think the question will resolve as and why, however you do not produce forecasts yourself.
                 Your output prioritises quality information and it can be as large as it needs to be, as long as it gets all the relevent information across.
 
