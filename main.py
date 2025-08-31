@@ -27,33 +27,26 @@ def search_internet(query: str, max_results: int = 50, batch_size: int = 10):
         unused_modifiers = modifiers.copy()
         random.shuffle(unused_modifiers)
         while len(all_results) < max_results:
-            batch_results = []   # <-- collect this batch’s results
+            results = []
             if len(unused_modifiers) < batch_size:
                 unused_modifiers = modifiers.copy()
                 random.shuffle(unused_modifiers)
-
             batch_modifiers = unused_modifiers[:batch_size]
             unused_modifiers = unused_modifiers[batch_size:]
-
             for modifier in batch_modifiers:
                 var_query = f"{query}{modifier}"
-                for r in ddgs.text(var_query, max_results=1):
-                    if "body" in r and r["href"] not in seen_urls:
-                        all_results.append(r)
-                        batch_results.append(r)   # <-- add to batch tracker
-                        seen_urls.add(r["href"])
-
-            if not batch_results:   # <-- now this check works
+                results.extend(ddgs.text(var_query, max_results=1))
+            for r in results:
+                if "body" in r and r["href"] not in seen_urls:
+                    all_results.append(r)
+                    seen_urls.add(r["href"])
+            if not results:
                 continue
-
             time.sleep(1)
-
         return all_results[:max_results]
     except Exception as e:
-        logger.error(f"Error in search_internet: {e}")
         return all_results
-
-
+        
 from forecasting_tools import (
     AskNewsSearcher,
     BinaryQuestion,
@@ -109,7 +102,6 @@ async def generate_search_query(question: MetaculusQuestion, model: str) -> str:
 
 async def get_combined_response_openrouter(prompt: str, query: str, model: str):
     search_results = search_internet(query)
-    logger.info(f"DDGS RAW RESULTS for query '{query}':\n{search_results}")
     search_content = "\n".join([result['body'] for result in search_results])
 
     full_prompt = f"""{prompt}
