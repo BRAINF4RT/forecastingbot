@@ -36,7 +36,6 @@ def search_internet(query: str, max_results: int = 50, batch_size: int = 10):
             for modifier in batch_modifiers:
                 var_query = f"{query}{modifier}"
                 raw_results = list(ddgs.text(var_query, max_results=1))  # force materialize generator
-                logger.info(f"Raw DDGS results for query '{var_query}': {raw_results}")
                 results.extend(raw_results)
             for r in results:
                 if "body" in r and r["href"] not in seen_urls:
@@ -105,8 +104,8 @@ async def generate_search_query(question: MetaculusQuestion, model: str) -> str:
 
 async def get_combined_response_openrouter(prompt: str, query: str, model: str):
     search_results = search_internet(query)
+    logger.info(f"[DDGS DEBUG] Search results for query '{query}': {search_results!r}")
     search_content = "\n".join([result['body'] for result in search_results])
-
     full_prompt = f"""{prompt}
 
     Additional Internet Search Results:
@@ -121,7 +120,6 @@ async def get_combined_response_openrouter(prompt: str, query: str, model: str):
     )
     response = await llm.invoke(full_prompt)
     return response
-
 
 class FallTemplateBot2025(ForecastBot):
 
@@ -180,7 +178,7 @@ class FallTemplateBot2025(ForecastBot):
                     await asyncio.sleep(3)
                 research = "\n\n".join(research_results)
             return research
-            
+    
     async def _run_forecast_on_binary(
         self, question: BinaryQuestion, research: str
     ) -> ReasonedPrediction[float]:
