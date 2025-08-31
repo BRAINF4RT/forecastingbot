@@ -41,10 +41,10 @@ def search_internet(query: str, max_results: int = 50, batch_size: int = 10, log
             for modifier in batch_modifiers:
                 var_query = f"{query}{modifier}"
                 raw_results = list(ddgs.text(var_query, max_results=1))
-                results.extend(raw_results)
                 if log_raw:
                     print(f"[RAW SEARCH] Query: '{var_query}' | Results type: {type(raw_results)}")
                     print(raw_results)
+                results.extend(raw_results)
             for r in results:
                 if "body" in r and r["href"] not in seen_urls:
                     all_results.append(r)
@@ -112,7 +112,6 @@ async def generate_search_query(question: MetaculusQuestion, model: str) -> str:
 
 async def get_combined_response_openrouter(prompt: str, query: str, model: str):
     search_results = search_internet(query)
-    print(search_results)
     search_content = "\n".join([result['body'] for result in search_results])
     full_prompt = f"""{prompt}
 
