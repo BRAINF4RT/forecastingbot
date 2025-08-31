@@ -178,7 +178,7 @@ class FallTemplateBot2025(ForecastBot):
         self, question: BinaryQuestion, research: str
     ) -> ReasonedPrediction[float]:
         # Hybrid: 3 Claude Sonnet 4 + 3 GPT-5
-        models = ["claude"] * 3 + ["gpt5"] * 3
+        models = ["claude"] * 1 + ["gpt5"] * 1
         predictions = []
     
         prompt = clean_indents(
@@ -232,7 +232,7 @@ class FallTemplateBot2025(ForecastBot):
         self, question: MultipleChoiceQuestion, research: str
     ) -> ReasonedPrediction[PredictedOptionList]:
         
-        models = ["claude"] * 3 + ["gpt5"] * 3
+        models = ["claude"] * 1 + ["gpt5"] * 1
         predictions = []
     
         prompt_template = clean_indents(
@@ -312,7 +312,7 @@ class FallTemplateBot2025(ForecastBot):
         self, question: NumericQuestion, research: str
     ) -> ReasonedPrediction[NumericDistribution]:
     
-        models = ["claude"] * 3 + ["gpt5"] * 3
+        models = ["claude"] * 1 + ["gpt5"] * 1
         predictions = []
     
         upper_msg, lower_msg = self._create_upper_and_lower_bound_messages(question)
@@ -377,14 +377,19 @@ class FallTemplateBot2025(ForecastBot):
             )
             prediction = NumericDistribution.from_question(percentile_list, question)
             predictions.append(prediction)
+    
         # Combine predictions by averaging percentiles
         combined_percentiles = []
-        for i in range(6):  # Assuming 6 percentiles: 10,20,40,60,80,90
-            combined_value = sum(p.declared_percentiles[i] for p in predictions) / len(predictions)
+        num_percentiles = len(predictions[0].declared_percentiles)
+        for i in range(num_percentiles):
+            # Extract the numeric value from Percentile objects
+            combined_value = sum(p.declared_percentiles[i].value for p in predictions) / len(predictions)
             combined_percentiles.append(combined_value)
+    
         final_prediction = NumericDistribution.from_percentiles(
             combined_percentiles, question
         )
+    
         return ReasonedPrediction(
             prediction_value=final_prediction,
             reasoning=f"Hybrid ensemble (3x Claude, 3x GPT-5) averaged percentiles"
