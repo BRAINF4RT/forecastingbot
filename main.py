@@ -36,6 +36,7 @@ def search_internet(query: str, max_results: int = 50, batch_size: int = 10):
             for modifier in batch_modifiers:
                 var_query = f"{query}{modifier}"
                 results.extend(ddgs.text(var_query, max_results=1))
+            logger.info(f"Raw DDGS results for query '{query}': {results}")
             for r in results:
                 if "body" in r and r["href"] not in seen_urls:
                     all_results.append(r)
