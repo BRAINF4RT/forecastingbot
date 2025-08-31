@@ -8,7 +8,7 @@ from typing import Literal
 from duckduckgo_search import DDGS
 ddgs = DDGS()
 
-def search_internet(query: str, max_results: int = 50, batch_size: int = 10, log_raw: bool = True):
+def search_internet(query: str, max_results: int = 50, batch_size: int = 10, log_raw: bool = True, do_dummy: bool = True):
     all_results = []
     seen_urls = set()
     modifiers = [
@@ -24,6 +24,11 @@ def search_internet(query: str, max_results: int = 50, batch_size: int = 10, log
         " deep dive", " examination", " inspection", " briefing", " updates"
     ]
     try:
+        if do_dummy:
+            dummy_query = "test"
+            for _ in range(batch_size):
+                _ = list(ddgs.text(dummy_query, max_results=50))
+            time.sleep(1)
         unused_modifiers = modifiers.copy()
         random.shuffle(unused_modifiers)
         while len(all_results) < max_results:
@@ -38,7 +43,7 @@ def search_internet(query: str, max_results: int = 50, batch_size: int = 10, log
                 raw_results = list(ddgs.text(var_query, max_results=1))
                 results.extend(raw_results)
                 if log_raw:
-                    print(type(raw_results))
+                    print(f"[RAW SEARCH] Query: '{var_query}' | Results type: {type(raw_results)}")
                     print(raw_results)
             for r in results:
                 if "body" in r and r["href"] not in seen_urls:
