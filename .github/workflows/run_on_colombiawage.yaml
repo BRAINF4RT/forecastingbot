@@ -33,7 +33,7 @@ jobs:
         run: poetry install --no-interaction --no-root
       - name: Run bot
         run: |
-          poetry run python main2.py --mode colombia_wage
+          poetry run python -u main2.py --mode colombia_wage
         # this reads the environment variables from the github repository.
         # Store under Settings --> Secrets and variables --> Actions
         env:
