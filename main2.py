@@ -23,30 +23,35 @@ def search_internet(query: str, max_results: int = 50, batch_size: int = 10, log
         " trends report", " analytical", " observations", " analysis report", " monitoring",
         " deep dive", " examination", " inspection", " briefing", " updates"
     ]
+    
     try:
         if do_dummy:
             dummy_query = "test"
             for _ in range(batch_size):
                 _ = list(ddgs.text(dummy_query, max_results=50))
+                _ = list(ddgs.news(dummy_query, max_results=50))
             time.sleep(1)
         unused_modifiers = modifiers.copy()
         random.shuffle(unused_modifiers)
         while len(all_results) < max_results:
-            results = []
             if len(unused_modifiers) < batch_size:
                 unused_modifiers = modifiers.copy()
                 random.shuffle(unused_modifiers)
             batch_modifiers = unused_modifiers[:batch_size]
             unused_modifiers = unused_modifiers[batch_size:]
+            results = []
             for modifier in batch_modifiers:
                 var_query = f"{query}{modifier}"
-                raw_results = list(ddgs.text(var_query, max_results=1))
+                raw_text_results = list(ddgs.text(var_query, max_results=1))
+                raw_news_results = list(ddgs.news(var_query, max_results=1))
                 if log_raw:
-                    print(f"[RAW SEARCH] Query: '{var_query}' | Results type: {type(raw_results)}")
-                    print(raw_results)
-                results.extend(raw_results)
+                    print(f"[RAW SEARCH] Query: '{var_query}' | Text results: {len(raw_text_results)}, News results: {len(raw_news_results)}")
+                    print("Text results:", raw_text_results)
+                    print("News results:", raw_news_results)
+                results.extend(raw_text_results)
+                results.extend(raw_news_results)
             for r in results:
-                if "body" in r and r["href"] not in seen_urls:
+                if "href" in r and r["href"] not in seen_urls:
                     all_results.append(r)
                     seen_urls.add(r["href"])
             if not results:
