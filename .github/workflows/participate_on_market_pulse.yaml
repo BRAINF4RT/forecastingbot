@@ -34,7 +34,7 @@ jobs:
         run: poetry install --no-interaction --no-root
       - name: Run bot
         run: |
-          poetry run python main2.py --mode market_pulse
+          poetry run python -u main2.py --mode market_pulse
         # this reads the environment variables from the github repository.
         # Store under Settings --> Secrets and variables --> Actions
         env:
