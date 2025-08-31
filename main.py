@@ -44,7 +44,6 @@ def search_internet(query: str, max_results: int = 50, batch_size: int = 10):
                 continue
             time.sleep(1)
         return all_results[:max_results]
-        logger.info(f"DDGS RAW RESULTS for (unmodified) query '{query}':\n{all_results}")
     except Exception as e:
         return all_results
         
@@ -119,7 +118,7 @@ async def get_combined_response_openrouter(prompt: str, query: str, model: str):
     )
     response = await llm.invoke(full_prompt)
     return response
-
+    logger.info(f"DDGS RAW RESULTS for query '{query}':\n{search_content}")
 
 class FallTemplateBot2025(ForecastBot):
 
