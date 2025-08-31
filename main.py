@@ -38,7 +38,8 @@ def search_internet(query: str, max_results: int = 50, batch_size: int = 10, log
                 raw_results = list(ddgs.text(var_query, max_results=1))
                 results.extend(raw_results)
                 if log_raw:
-                    logger.info(f"[RAW SEARCH] Query: '{var_query}' | Results: {raw_results!r}")
+                    print(type(raw_results))
+                    print(raw_results)
             for r in results:
                 if "body" in r and r["href"] not in seen_urls:
                     all_results.append(r)
