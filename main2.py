@@ -207,8 +207,9 @@ class FallTemplateBot2025(ForecastBot):
             (d) A brief description of a scenario that results in a Yes outcome.
 
             You write your rationale remembering that good forecasters put extra weight on the status quo outcome since the world changes slowly most of the time.
+            If the question is going to close WITHIN the next few days, ensure that you put extra weight on that prediction as it will be your last prediction on that question.
             Keep in mind that if you put extra weight on a prediction and your prediction is correct, you will score better. However if your prediction is wrong, you will be penalised harder for adding that confidence.
-
+            
             The last thing you write is your final answer as: "Probability: ZZ%", 0-100
             """
         )
@@ -256,6 +257,7 @@ class FallTemplateBot2025(ForecastBot):
             (c) A description of an scenario that results in an unexpected outcome.
 
             You write your rationale remembering that (1) good forecasters put extra weight on the status quo outcome since the world changes slowly most of the time, and (2) good forecasters leave some moderate probability on most options to account for unexpected outcomes.
+            If the question is going to close WITHIN the next few days, ensure that you put extra weight on that prediction as it will be your last prediction on that question.
             Keep in mind that if you put extra weight on a prediction and your prediction is correct, you will score better. However if your prediction is wrong, you will be penalised harder for adding that confidence.
 
             The last thing you write is your final probabilities for the N options in this order {question.options} as:
@@ -331,6 +333,7 @@ class FallTemplateBot2025(ForecastBot):
             (f) A brief description of an unexpected scenario that results in a high outcome.
 
             You remind yourself that good forecasters are humble and set wide 90/10 confidence intervals to account for unknown unknowns.
+            If the question is going to close WITHIN the next few days, ensure that you put extra weight on that prediction as it will be your last prediction on that question. 
             Keep in mind that if you put extra weight on a prediction and your prediction is correct, you will score better. However if your prediction is wrong, you will be penalised harder for adding that confidence.
 
             The last thing you write is your final answer as:
@@ -401,18 +404,17 @@ if __name__ == "__main__":
     parser.add_argument(
         "--mode",
         type=str,
-        choices=["tournament", "metaculus_cup", "test_questions", "market_pulse", "colombia_wage",],
+        choices=["tournament", "metaculus_cup", "test_questions", "market_pulse",],
         default="tournament",
         help="Specify the run mode (default: tournament)",
     )
     args = parser.parse_args()
-    run_mode: Literal["tournament", "metaculus_cup", "test_questions", "market_pulse", "colombia_wage",] = args.mode
+    run_mode: Literal["tournament", "metaculus_cup", "test_questions", "market_pulse",] = args.mode
     assert run_mode in [
         "tournament",
         "metaculus_cup",
         "test_questions",
         "market_pulse",
-        "colombia_wage",
     ], "Invalid run mode"
 
     template_bot = FallTemplateBot2025(
@@ -460,19 +462,7 @@ if __name__ == "__main__":
             template_bot.forecast_on_tournament(
                 MP25Q3_TOURNAMENT_ID, return_exceptions=True
             )
-        )
-    elif run_mode == "colombia_wage":
-        QUESTION = [
-            "https://www.metaculus.com/questions/39330/what-will-be-the-percentage-increase-for-the-minimum-wage-in-colombia-for-2026/",
-        ]
-        template_bot.skip_previously_forecasted_questions = False
-        questions = [
-            MetaculusApi.get_question_by_url(question_url)
-            for question_url in QUESTION
-        ]
-        forecast_reports = asyncio.run(
-            template_bot.forecast_questions(questions, return_exceptions=True)
-        )
+        )       
     elif run_mode == "test_questions":
         EXAMPLE_QUESTIONS = [
             #"https://www.metaculus.com/questions/39109/which-party-will-lead-tasmania/",
