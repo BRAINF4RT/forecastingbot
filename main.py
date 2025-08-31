@@ -118,7 +118,6 @@ async def get_combined_response_openrouter(prompt: str, query: str, model: str):
     )
     response = await llm.invoke(full_prompt)
     return response
-    logger.info(f"DDGS RAW RESULTS for query '{query}':\n{search_content}")
 
 class FallTemplateBot2025(ForecastBot):
 
@@ -176,6 +175,7 @@ class FallTemplateBot2025(ForecastBot):
                     research_results.append(result)
                     await asyncio.sleep(3)
                 research = "\n\n".join(research_results)
+            logger.info(f"DDGS RAW RESULTS for query '{query}':\n{search_content}")
             return research
             
     async def _run_forecast_on_binary(
