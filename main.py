@@ -112,6 +112,7 @@ async def generate_search_query(question: MetaculusQuestion, model: str) -> str:
 
 async def get_combined_response_openrouter(prompt: str, query: str, model: str):
     search_results = search_internet(query)
+    print(search_results)
     search_content = "\n".join([result['body'] for result in search_results])
     full_prompt = f"""{prompt}
 
