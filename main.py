@@ -44,6 +44,7 @@ def search_internet(query: str, max_results: int = 50, batch_size: int = 10):
                 continue
             time.sleep(1)
         return all_results[:max_results]
+        logger.info(f"DDGS RAW RESULTS for (unmodified) query '{query}':\n{all_results}")
     except Exception as e:
         return all_results
         
