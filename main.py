@@ -35,8 +35,9 @@ def search_internet(query: str, max_results: int = 50, batch_size: int = 10):
             unused_modifiers = unused_modifiers[batch_size:]
             for modifier in batch_modifiers:
                 var_query = f"{query}{modifier}"
-                results.extend(ddgs.text(var_query, max_results=1))
-            logger.info(f"Raw DDGS results for query '{query}': {results}")
+                raw_results = list(ddgs.text(var_query, max_results=1))  # force materialize generator
+                logger.info(f"Raw DDGS results for query '{var_query}': {raw_results}")
+                results.extend(raw_results)
             for r in results:
                 if "body" in r and r["href"] not in seen_urls:
                     all_results.append(r)
@@ -46,6 +47,7 @@ def search_internet(query: str, max_results: int = 50, batch_size: int = 10):
             time.sleep(1)
         return all_results[:max_results]
     except Exception as e:
+        print(f"Error searching internet: {e}")
         return all_results
         
 from forecasting_tools import (
