@@ -102,6 +102,7 @@ async def generate_search_query(question: MetaculusQuestion, model: str) -> str:
 
 async def get_combined_response_openrouter(prompt: str, query: str, model: str):
     search_results = search_internet(query)
+    logger.info(f"DDGS RAW RESULTS for query '{query}':\n{search_results}")
     search_content = "\n".join([result['body'] for result in search_results])
 
     full_prompt = f"""{prompt}
@@ -118,6 +119,7 @@ async def get_combined_response_openrouter(prompt: str, query: str, model: str):
     )
     response = await llm.invoke(full_prompt)
     return response
+
 
 class FallTemplateBot2025(ForecastBot):
 
@@ -142,7 +144,7 @@ class FallTemplateBot2025(ForecastBot):
                    - Identify how often similar events have occurred in the past.
                    - Highlight similarities and differences between past cases and the present one.
                 Try to diversify your sources, but also ensure that they are reputable.
-                Information gathered from community driven, informal social media platforms should be marginalized as they are more likely to hold misinformation. 
+                Information gathered from community driven, informal social media platforms should be marginalized as they are more likely to hold misinformation.
                 Tell the forecaster what YOU think the question will resolve as and why, however you do not produce forecasts yourself.
                 Your output prioritises quality information and it can be as large as it needs to be, as long as it gets all the relevent information across.
 
@@ -175,7 +177,6 @@ class FallTemplateBot2025(ForecastBot):
                     research_results.append(result)
                     await asyncio.sleep(3)
                 research = "\n\n".join(research_results)
-            logger.info(f"DDGS RAW RESULTS for query '{query}':\n{search_content}")
             return research
             
     async def _run_forecast_on_binary(
