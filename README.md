@@ -1,5 +1,4 @@
-"Error free?"
-Yeah I know, it was COMPLETELY free to make a whole lotta errors.
+"'Error free?', Yeah I know, it was COMPLETELY free to make a whole lotta errors."
 
 
-Came 48th out of 56 in the the Warmup Minibench, but there's always the next one.
+Came 48th out of 56 in the the Warmup Minibench, but there's always the next one. Having shoddy prompts DOES appear to negatively impact bot accuracy.
