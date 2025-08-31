@@ -75,7 +75,7 @@ async def generate_search_query(question: MetaculusQuestion, model: str) -> str:
     Given a Metaculus prediction question, create a short search query (MAX 25 words) that captures the key
     entities, relevant numbers, and concepts. Avoid copying the question word-for-word. Focus on what
     someone would type in a search engine to find information that could help answer the question. Try to
-    avoid words in your output that could bring up irrelevant information.
+    avoid words in your output that could bring up irrelevent information.
 
     Question Title:
     {question.question_text}
@@ -121,6 +121,7 @@ async def get_combined_response_openrouter(prompt: str, query: str, model: str):
 
 
 class FallTemplateBot2025(ForecastBot):
+
 
     _max_concurrent_questions = (
         1  
@@ -177,96 +178,88 @@ class FallTemplateBot2025(ForecastBot):
     async def _run_forecast_on_binary(
         self, question: BinaryQuestion, research: str
     ) -> ReasonedPrediction[float]:
-        # Hybrid: 3 Claude Sonnet 4 + 3 GPT-5
-        models = ["claude"] * 1 + ["gpt5"] * 1
-        predictions = []
-    
         prompt = clean_indents(
             f"""
             You are a professional forecaster interviewing for a job.
-    
+
             Your interview question is:
             {question.question_text}
-    
+
             Question background:
             {question.background_info}
-    
+
+
             This question's outcome will be determined by the specific criteria below. These criteria have not yet been satisfied:
             {question.resolution_criteria}
-    
+
             {question.fine_print}
-    
+
+
             The compiled information of your multiple research assistants says:
             {research}
-    
+
             Today is {datetime.now().strftime("%Y-%m-%d")}.
-    
+
             Before answering you write:
             (a) The time left until the outcome to the question is known.
             (b) The status quo outcome if nothing changed.
             (c) A brief description of a scenario that results in a No outcome.
             (d) A brief description of a scenario that results in a Yes outcome.
-    
+
             You write your rationale remembering that good forecasters put extra weight on the status quo outcome since the world changes slowly most of the time.
             If the question is going to close WITHIN the next few days, ensure that you put extra weight on that prediction as it will be your last prediction on that question.
             Keep in mind that if you put extra weight on a prediction and your prediction is correct, you will score better. However if your prediction is wrong, you will be penalised harder for adding that confidence.
-    
+            
             The last thing you write is your final answer as: "Probability: ZZ%", 0-100
             """
         )
-    
-        for model_name in models:
-            llm = self.get_llm(model_name, "llm")
-            reasoning = await llm.invoke(prompt)
-            prediction: BinaryPrediction = await structure_output(
-                reasoning, BinaryPrediction, model=self.get_llm("parser", "llm")
-            )
-            predictions.append(prediction.prediction_in_decimal)
-        final_score = sum(predictions) / len(predictions)
-        return ReasonedPrediction(
-            prediction_value=final_score,
-            reasoning=f"Hybrid ensemble (3x Claude, 3x GPT-5) average: {final_score:.2f}"
+        reasoning = await self.get_llm("default", "llm").invoke(prompt)
+        logger.info(f"Reasoning for URL {question.page_url}: {reasoning}")
+        binary_prediction: BinaryPrediction = await structure_output(
+            reasoning, BinaryPrediction, model=self.get_llm("parser", "llm")
         )
+        decimal_pred = max(0.01, min(0.99, binary_prediction.prediction_in_decimal))
+
+        logger.info(
+            f"Forecasted URL {question.page_url} with prediction: {decimal_pred}"
+        )
+        return ReasonedPrediction(prediction_value=decimal_pred, reasoning=reasoning)
 
     async def _run_forecast_on_multiple_choice(
         self, question: MultipleChoiceQuestion, research: str
     ) -> ReasonedPrediction[PredictedOptionList]:
-        
-        models = ["claude"] * 1 + ["gpt5"] * 1
-        predictions = []
-    
-        prompt_template = clean_indents(
+        prompt = clean_indents(
             f"""
             You are a professional forecaster interviewing for a job.
-    
+
             Your interview question is:
             {question.question_text}
-    
+
             The options are: {question.options}
-    
-    
+
+
             Background:
             {question.background_info}
-    
+
             {question.resolution_criteria}
-    
+
             {question.fine_print}
-    
-    
+
+
             The compiled information of your multiple research assistants says:
             {research}
-    
+
             Today is {datetime.now().strftime("%Y-%m-%d")}.
-    
+
             Before answering you write:
             (a) The time left until the outcome to the question is known.
             (b) The status quo outcome if nothing changed.
             (c) A description of an scenario that results in an unexpected outcome.
-    
+
             You write your rationale remembering that (1) good forecasters put extra weight on the status quo outcome since the world changes slowly most of the time, and (2) good forecasters leave some moderate probability on most options to account for unexpected outcomes.
             If the question is going to close WITHIN the next few days, ensure that you put extra weight on that prediction as it will be your last prediction on that question.
             Keep in mind that if you put extra weight on a prediction and your prediction is correct, you will score better. However if your prediction is wrong, you will be penalised harder for adding that confidence.
-    
+
             The last thing you write is your final probabilities for the N options in this order {question.options} as:
             Option_A: Probability_A
             Option_B: Probability_B
@@ -274,7 +267,6 @@ class FallTemplateBot2025(ForecastBot):
             Option_N: Probability_N
             """
         )
-    
         parsing_instructions = clean_indents(
             f"""
             Make sure that all option names are one of the following:
@@ -282,70 +274,56 @@ class FallTemplateBot2025(ForecastBot):
             The text you are parsing may prepend these options with some variation of "Option" which you should remove if not part of the option names I just gave you.
             """
         )
-    
-        for model_name in models:
-            llm = self.get_llm(model_name, "llm")
-            reasoning = await llm.invoke(prompt_template)
-            predicted_option_list: PredictedOptionList = await structure_output(
-                reasoning, PredictedOptionList, model=self.get_llm("parser", "llm"),
-                additional_instructions=parsing_instructions
-            )
-            predictions.append(predicted_option_list)
-    
-        # Combine predictions by averaging probabilities for each option
-        combined_probs = {}
-        for opt in question.options:
-            combined_probs[opt] = sum(
-                pred.get_probability(opt) for pred in predictions
-            ) / len(predictions)
-    
-        final_prediction = PredictedOptionList([
-            (opt, combined_probs[opt]) for opt in question.options
-        ])
-    
+        reasoning = await self.get_llm("default", "llm").invoke(prompt)
+        logger.info(f"Reasoning for URL {question.page_url}: {reasoning}")
+        predicted_option_list: PredictedOptionList = await structure_output(
+            text_to_structure=reasoning,
+            output_type=PredictedOptionList,
+            model=self.get_llm("parser", "llm"),
+            additional_instructions=parsing_instructions,
+        )
+        logger.info(
+            f"Forecasted URL {question.page_url} with prediction: {predicted_option_list}"
+        )
         return ReasonedPrediction(
-            prediction_value=final_prediction,
-            reasoning=f"Hybrid ensemble (3x Claude, 3x GPT-5) averaged probabilities"
+            prediction_value=predicted_option_list, reasoning=reasoning
         )
 
     async def _run_forecast_on_numeric(
         self, question: NumericQuestion, research: str
     ) -> ReasonedPrediction[NumericDistribution]:
-    
-        models = ["claude"] * 1 + ["gpt5"] * 1
-        predictions = []
-    
-        upper_msg, lower_msg = self._create_upper_and_lower_bound_messages(question)
-    
-        prompt_template = clean_indents(
+        upper_bound_message, lower_bound_message = (
+            self._create_upper_and_lower_bound_messages(question)
+        )
+        prompt = clean_indents(
             f"""
             You are a professional forecaster interviewing for a job.
-    
+
             Your interview question is:
             {question.question_text}
-    
+
             Background:
             {question.background_info}
-    
+
             {question.resolution_criteria}
-    
+
             {question.fine_print}
-    
+
             Units for answer: {question.unit_of_measure if question.unit_of_measure else "Not stated (please infer this)"}
-    
+
             The compiled information of your multiple research assistants says:
             {research}
-    
+
             Today is {datetime.now().strftime("%Y-%m-%d")}.
-    
-            {lower_msg}
-            {upper_msg}
-    
+
+            {lower_bound_message}
+            {upper_bound_message}
+
             Formatting Instructions:
             - Please notice the units requested (e.g. whether you represent a number as 1,000,000 or 1 million).
             - Never use scientific notation.
             - Always start with a smaller number (more negative if negative) and then increase from there
-    
+
             Before answering you write:
             (a) The time left until the outcome to the question is known.
             (b) The outcome if nothing changed.
@@ -353,11 +331,11 @@ class FallTemplateBot2025(ForecastBot):
             (d) The expectations of experts and markets.
             (e) A brief description of an unexpected scenario that results in a low outcome.
             (f) A brief description of an unexpected scenario that results in a high outcome.
-    
+
             You remind yourself that good forecasters are humble and set wide 90/10 confidence intervals to account for unknown unknowns.
             If the question is going to close WITHIN the next few days, ensure that you put extra weight on that prediction as it will be your last prediction on that question. 
             Keep in mind that if you put extra weight on a prediction and your prediction is correct, you will score better. However if your prediction is wrong, you will be penalised harder for adding that confidence.
-    
+
             The last thing you write is your final answer as:
             "
             Percentile 10: XX
@@ -369,31 +347,16 @@ class FallTemplateBot2025(ForecastBot):
             "
             """
         )
-        for model_name in models:
-            llm = self.get_llm(model_name, "llm")
-            reasoning = await llm.invoke(prompt_template)
-            percentile_list: list[Percentile] = await structure_output(
-                reasoning, list[Percentile], model=self.get_llm("parser", "llm")
-            )
-            prediction = NumericDistribution.from_question(percentile_list, question)
-            predictions.append(prediction)
-    
-        # Combine predictions by averaging percentiles
-        combined_percentiles = []
-        num_percentiles = len(predictions[0].declared_percentiles)
-        for i in range(num_percentiles):
-            # Extract the numeric value from Percentile objects
-            combined_value = sum(p.declared_percentiles[i].value for p in predictions) / len(predictions)
-            combined_percentiles.append(combined_value)
-    
-        final_prediction = NumericDistribution.from_percentiles(
-            combined_percentiles, question
+        reasoning = await self.get_llm("default", "llm").invoke(prompt)
+        logger.info(f"Reasoning for URL {question.page_url}: {reasoning}")
+        percentile_list: list[Percentile] = await structure_output(
+            reasoning, list[Percentile], model=self.get_llm("parser", "llm")
         )
-    
-        return ReasonedPrediction(
-            prediction_value=final_prediction,
-            reasoning=f"Hybrid ensemble (3x Claude, 3x GPT-5) averaged percentiles"
+        prediction = NumericDistribution.from_question(percentile_list, question)
+        logger.info(
+            f"Forecasted URL {question.page_url} with prediction: {prediction.declared_percentiles}"
         )
+        return ReasonedPrediction(prediction_value=prediction, reasoning=reasoning)
 
     def _create_upper_and_lower_bound_messages(
         self, question: NumericQuestion
@@ -422,6 +385,7 @@ class FallTemplateBot2025(ForecastBot):
             )
         return upper_bound_message, lower_bound_message
 
+
 if __name__ == "__main__":
     logging.basicConfig(
         level=logging.INFO,
@@ -440,45 +404,39 @@ if __name__ == "__main__":
     parser.add_argument(
         "--mode",
         type=str,
-        choices=["tournament", "metaculus_cup", "test_questions", "market_pulse",],
+        choices=["tournament", "metaculus_cup", "test_questions", "market_pulse", "colombia_wage",],
         default="tournament",
         help="Specify the run mode (default: tournament)",
     )
     args = parser.parse_args()
-    run_mode: Literal["tournament", "metaculus_cup", "test_questions", "market_pulse",] = args.mode
+    run_mode: Literal["tournament", "metaculus_cup", "test_questions", "market_pulse", "colombia_wage",] = args.mode
     assert run_mode in [
         "tournament",
         "metaculus_cup",
         "test_questions",
         "market_pulse",
+        "colombia_wage",
     ], "Invalid run mode"
 
     template_bot = FallTemplateBot2025(
         research_reports_per_question=2,
-        predictions_per_research_report=1,
+        predictions_per_research_report=5,
         use_research_summary_to_forecast=False,
         publish_reports_to_metaculus=True,
         folder_to_save_reports_to=None,
         skip_previously_forecasted_questions=True,
          llms={  
-            "claude": GeneralLlm(
-                model="openrouter/anthropic/claude-sonnet-4",
-                temperature=0.2,
-                timeout=40,
-                allowed_tries=2,
-            ),
-            "gpt5": GeneralLlm(
-                model="openrouter/openai/gpt-5",
-                temperature=0.2,
-                timeout=40,
-                allowed_tries=2,
-            ),
-            "summarizer": "openrouter/openai/gpt-oss-20b",
-            "researcher": "openrouter/openai/gpt-oss-120b",  
-            "parser": "openrouter/openai/gpt-oss-20b",
-            "querier": "openrouter/openai/gpt-oss-20b",
-        },
-
+                 "default": GeneralLlm(
+                 model="openrouter/anthropic/claude-sonnet-4",
+                 temperature=0.2,
+                 timeout=40,
+                 allowed_tries=2,
+             ),
+             "summarizer": "openrouter/openai/gpt-oss-20b",
+             "researcher": "openrouter/openai/gpt-oss-120b",  
+             "parser": "openrouter/openai/gpt-oss-20b",
+             "querier": "openrouter/openai/gpt-oss-20b",
+         },
     )         
     if run_mode == "tournament":
         seasonal_tournament_reports = asyncio.run(
@@ -505,7 +463,19 @@ if __name__ == "__main__":
             template_bot.forecast_on_tournament(
                 MP25Q3_TOURNAMENT_ID, return_exceptions=True
             )
-        )       
+        )
+    elif run_mode == "colombia_wage":
+        EXAMPLE_QUESTIONS = [
+            "https://www.metaculus.com/questions/39330/what-will-be-the-percentage-increase-for-the-minimum-wage-in-colombia-for-2026/",
+        ]
+        template_bot.skip_previously_forecasted_questions = False
+        questions = [
+            MetaculusApi.get_question_by_url(question_url)
+            for question_url in EXAMPLE_QUESTIONS
+        ]
+        forecast_reports = asyncio.run(
+            template_bot.forecast_questions(questions, return_exceptions=True)
+        )      
     elif run_mode == "test_questions":
         EXAMPLE_QUESTIONS = [
             #"https://www.metaculus.com/questions/39109/which-party-will-lead-tasmania/",
