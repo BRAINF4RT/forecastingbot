@@ -435,7 +435,7 @@ if __name__ == "__main__":
     ], "Invalid run mode"
 
     template_bot = FallTemplateBot2025(
-        research_reports_per_question=2,
+        research_reports_per_question=1,
         predictions_per_research_report=5,
         use_research_summary_to_forecast=False,
         publish_reports_to_metaculus=True,
