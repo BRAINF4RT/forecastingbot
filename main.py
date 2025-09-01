@@ -452,10 +452,10 @@ if __name__ == "__main__":
                  timeout=40,
                  allowed_tries=2,
              ),
-             "summarizer": "openrouter/meta-llama/llama-4-scout:free",
-             "researcher": "openrouter/openai/gpt-oss-20b:free",  
-             "parser": "openrouter/openai/gpt-oss-20b:free",
-             "querier": "openrouter/openai/gpt-oss-20b:free",
+             "summarizer": "openrouter/deepseek/deepseek-chat-v3.1:free",
+             "researcher": "openrouter/deepseek/deepseek-chat-v3.1:free",  
+             "parser": "openrouter/deepseek/deepseek-chat-v3.1:free",
+             "querier": "openrouter/deepseek/deepseek-chat-v3.1:free",
          },
     )         
     if run_mode == "tournament":
