@@ -447,7 +447,7 @@ if __name__ == "__main__":
         skip_previously_forecasted_questions=True,
          llms={  
                  "default": GeneralLlm(
-                 model= "openrouter/openai/gpt-oss-120b:free", #"openrouter/anthropic/claude-sonnet-4",
+                 model= "openrouter/deepseek/deepseek-r1-0528:free", #"openrouter/anthropic/claude-sonnet-4",
                  temperature=0.2,
                  timeout=40,
                  allowed_tries=2,
