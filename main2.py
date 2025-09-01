@@ -452,7 +452,7 @@ if __name__ == "__main__":
                  timeout=40,
                  allowed_tries=2,
              ),
-             "summarizer": "openrouter/openai/gpt-oss-20b",
+             "summarizer": "openrouter/meta-llama/llama-4-scout",
              "researcher": "openrouter/openai/gpt-oss-120b",  
              "parser": "openrouter/openai/gpt-oss-20b",
              "querier": "openrouter/openai/gpt-oss-20b",
