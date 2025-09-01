@@ -179,7 +179,7 @@ class FallTemplateBot2025(ForecastBot):
                 research = ""
             else:
                 research_results = []
-                for _ in range(1):
+                for _ in range(3):
                     search_query = await generate_search_query(question, model=self.get_llm("querier"))
                     logger.info(f"Using search query for question {question.page_url}: {search_query}")
                     result = await get_combined_response_openrouter(
@@ -440,20 +440,20 @@ if __name__ == "__main__":
 
     template_bot = FallTemplateBot2025(
         research_reports_per_question=1,
-        predictions_per_research_report=1,
+        predictions_per_research_report=5,
         use_research_summary_to_forecast=False,
         publish_reports_to_metaculus=True,
         folder_to_save_reports_to=None,
         skip_previously_forecasted_questions=True,
          llms={  
                  "default": GeneralLlm(
-                 model= "openrouter/openai/gpt-oss-20b:free", #"openrouter/anthropic/claude-sonnet-4",
+                 model= "openrouter/openai/gpt-oss-120b:free", #"openrouter/anthropic/claude-sonnet-4",
                  temperature=0.2,
                  timeout=40,
                  allowed_tries=2,
              ),
              "summarizer": "openrouter/meta-llama/llama-4-scout:free",
-             "researcher": "openrouter/openai/gpt-oss-120b:free",  
+             "researcher": "openrouter/openai/gpt-oss-20b:free",  
              "parser": "openrouter/openai/gpt-oss-20b:free",
              "querier": "openrouter/openai/gpt-oss-20b:free",
          },
