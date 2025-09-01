@@ -159,6 +159,7 @@ class FallTemplateBot2025(ForecastBot):
                 Information gathered from community driven, informal social media platforms should be marginalized as they are more likely to hold misinformation.
                 DO NOT put any information in your output about what YOU think the question will resolve as, you do NOT produce forecasts yourself.
                 Your output prioritises quality information and it can be as large as it needs to be, as long as it gets all the relevent information across.
+                Emphasise more recent information from research, then older information.
 
                 Today is {datetime.now().strftime("%Y-%m-%d")}.
                 
@@ -225,6 +226,7 @@ class FallTemplateBot2025(ForecastBot):
             You write your rationale remembering that good forecasters put extra weight on the status quo outcome since the world changes slowly most of the time.
             If the question is going to close WITHIN the next few days, ensure that you put extra weight on that prediction as it will be your last prediction on that question.
             Keep in mind that if you put extra weight on a prediction and your prediction is correct, you will score better. However if your prediction is wrong, you will be penalised harder for adding that confidence.
+            Emphasise more recent information from research, then older information.
             
             The last thing you write is your final answer as: "Probability: ZZ%", 0-100
             """
@@ -275,6 +277,7 @@ class FallTemplateBot2025(ForecastBot):
             You write your rationale remembering that (1) good forecasters put extra weight on the status quo outcome since the world changes slowly most of the time, and (2) good forecasters leave some moderate probability on most options to account for unexpected outcomes.
             If the question is going to close WITHIN the next few days, ensure that you put extra weight on that prediction as it will be your last prediction on that question.
             Keep in mind that if you put extra weight on a prediction and your prediction is correct, you will score better. However if your prediction is wrong, you will be penalised harder for adding that confidence.
+            Emphasise more recent information from research, then older information.
 
             The last thing you write is your final probabilities for the N options in this order {question.options} as:
             Option_A: Probability_A
@@ -351,6 +354,7 @@ class FallTemplateBot2025(ForecastBot):
             You remind yourself that good forecasters are humble and set wide 90/10 confidence intervals to account for unknown unknowns.
             If the question is going to close WITHIN the next few days, ensure that you put extra weight on that prediction as it will be your last prediction on that question. 
             Keep in mind that if you put extra weight on a prediction and your prediction is correct, you will score better. However if your prediction is wrong, you will be penalised harder for adding that confidence.
+            Emphasise more recent information from research, then older information.
 
             The last thing you write is your final answer as:
             "
