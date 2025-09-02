@@ -453,7 +453,7 @@ if __name__ == "__main__":
                  allowed_tries=2,
              ),
              "summarizer": "openrouter/meta-llama/llama-3.3-70b-instruct:free", #"openrouter/openai/gpt-oss-20b",
-             "researcher": "openrouter/openai/gpt-oss-120b:free", #"openrouter/openai/gpt-oss-120b",  
+             "researcher": "openrouter/microsoft/mai-ds-r1:fre", #"openrouter/openai/gpt-oss-120b",  
              "parser": "openrouter/mistralai/mistral-small-3.2-24b-instruct:free", #"openrouter/openai/gpt-oss-20b",
              "querier": "openrouter/meta-llama/llama-4-scout:free", #"openrouter/openai/gpt-oss-20b",
          },
