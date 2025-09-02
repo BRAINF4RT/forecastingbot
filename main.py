@@ -452,10 +452,10 @@ if __name__ == "__main__":
                  timeout=40,
                  allowed_tries=2,
              ),
-             "summarizer": "openrouter/deepseek/deepseek-chat-v3.1:free",
+             "summarizer": "openrouter/meta-llama/llama-3.3-70b-instruct:free",
              "researcher": "openrouter/deepseek/deepseek-chat-v3.1:free",  
-             "parser": "openrouter/deepseek/deepseek-chat-v3.1:free",
-             "querier": "openrouter/deepseek/deepseek-chat-v3.1:free",
+             "parser": "openrouter/mistralai/mistral-small-3.2-24b-instruct:free",
+             "querier": "openrouter/meta-llama/llama-4-scout:free",
          },
     )         
     if run_mode == "tournament":
