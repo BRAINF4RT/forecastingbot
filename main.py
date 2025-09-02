@@ -447,13 +447,13 @@ if __name__ == "__main__":
         skip_previously_forecasted_questions=True,
          llms={  
                  "default": GeneralLlm(
-                 model= "openrouter/deepseek/deepseek-r1-0528:free", #"openrouter/anthropic/claude-sonnet-4",
+                 model= "openrouter/microsoft/mai-ds-r1:free", #"openrouter/anthropic/claude-sonnet-4",
                  temperature=0.2,
                  timeout=40,
                  allowed_tries=2,
              ),
              "summarizer": "openrouter/meta-llama/llama-3.3-70b-instruct:free",
-             "researcher": "openrouter/deepseek/deepseek-chat-v3.1:free",  
+             "researcher": "openrouter/deepseek/deepseek-r1-0528:free",  
              "parser": "openrouter/mistralai/mistral-small-3.2-24b-instruct:free",
              "querier": "openrouter/meta-llama/llama-4-scout:free",
          },
