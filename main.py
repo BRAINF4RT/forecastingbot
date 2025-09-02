@@ -452,10 +452,10 @@ if __name__ == "__main__":
                  timeout=40,
                  allowed_tries=2,
              ),
-             "summarizer": "openrouter/meta-llama/llama-3.3-70b-instruct:free",
-             "researcher": "openrouter/openai/gpt-oss-120b:free",  
-             "parser": "openrouter/mistralai/mistral-small-3.2-24b-instruct:free",
-             "querier": "openrouter/meta-llama/llama-4-scout:free",
+             "summarizer": "openrouter/meta-llama/llama-3.3-70b-instruct:free", #"openrouter/openai/gpt-oss-20b",
+             "researcher": "openrouter/openai/gpt-oss-120b:free", #"openrouter/openai/gpt-oss-120b",  
+             "parser": "openrouter/mistralai/mistral-small-3.2-24b-instruct:free", #"openrouter/openai/gpt-oss-20b",
+             "querier": "openrouter/meta-llama/llama-4-scout:free", #"openrouter/openai/gpt-oss-20b",
          },
     )         
     if run_mode == "tournament":
