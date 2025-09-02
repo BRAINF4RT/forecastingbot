@@ -90,7 +90,7 @@ async def generate_search_query(question: MetaculusQuestion, model: str) -> str:
     Given a Metaculus prediction question, create a short search query (MAX 25 words) that captures the key
     entities, relevant numbers, and concepts. Avoid copying the question word-for-word. Focus on what
     someone would type in a search engine to find information that could help answer the question. Try to
-    avoid words in your output that could bring up irrelevent information.
+    avoid words in your output that could bring up irrelevent information. 
 
     Question Title:
     {question.question_text}
@@ -101,7 +101,7 @@ async def generate_search_query(question: MetaculusQuestion, model: str) -> str:
     More info:
     {question.fine_print}
 
-    Return ONLY the final search query.
+    You must output ONLY the final search query, no reasoning or explanation, ONLY the final generated search query.
     """
 
     llm = GeneralLlm(
@@ -455,7 +455,7 @@ if __name__ == "__main__":
              "summarizer": "openrouter/meta-llama/llama-3.3-70b-instruct:free", #"openrouter/openai/gpt-oss-20b",
              "researcher": "openrouter/openai/gpt-oss-120b:free", #"openrouter/openai/gpt-oss-120b",  
              "parser": "openrouter/mistralai/mistral-small-3.2-24b-instruct:free", #"openrouter/openai/gpt-oss-20b",
-             "querier": "openrouter/openai/gpt-oss-20b:free", #"openrouter/openai/gpt-oss-20b",
+             "querier": "openrouter/meta-llama/llama-4-scout:free", #"openrouter/openai/gpt-oss-20b",
          },
     )         
     if run_mode == "tournament":
