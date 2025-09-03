@@ -108,7 +108,7 @@ async def generate_search_query(question: MetaculusQuestion, model: str) -> str:
         model=model,
         temperature=0.2,
         timeout=20,
-        allowed_tries=2,
+        allowed_tries=5,
     )
     query = await llm.invoke(prompt)
     query = query.strip() 
@@ -450,7 +450,7 @@ if __name__ == "__main__":
                  model= "openrouter/microsoft/mai-ds-r1:free", #"openrouter/anthropic/claude-sonnet-4",
                  temperature=0.2,
                  timeout=40,
-                 allowed_tries=2,
+                 allowed_tries=5,
              ),
              "summarizer": "openrouter/meta-llama/llama-3.3-70b-instruct:free", #"openrouter/openai/gpt-oss-20b",
              "researcher": "openrouter/microsoft/mai-ds-r1:free", #"openrouter/openai/gpt-oss-120b",  
