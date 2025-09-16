@@ -444,7 +444,7 @@ if __name__ == "__main__":
          llms={  
                  "default": GeneralLlm(
                  model= "openrouter/microsoft/mai-ds-r1:free", #"openrouter/anthropic/claude-sonnet-4",
-                 temperature=0.2,
+                 temperature=0.3,
                  timeout=40,
                  allowed_tries=5,
              ),
