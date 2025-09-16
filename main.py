@@ -449,7 +449,12 @@ if __name__ == "__main__":
                  allowed_tries=5,
              ),
              "summarizer": "openrouter/meta-llama/llama-3.3-70b-instruct:free", #"openrouter/openai/gpt-oss-20b",
-             "researcher": "openrouter/microsoft/mai-ds-r1:free", #"openrouter/openai/gpt-oss-120b",  
+                 "researcher": GeneralLlm(
+                    model="openrouter/microsoft/mai-ds-r1:free",  # same model as before
+                    temperature=0,  # <-- set temperature to zero
+                    timeout=40,
+                    allowed_tries=5,
+                ),
              "parser": "openrouter/mistralai/mistral-small-3.2-24b-instruct:free", #"openrouter/openai/gpt-oss-20b",
              "querier": "openrouter/meta-llama/llama-4-scout:free", #"openrouter/openai/gpt-oss-20b",
          },
