@@ -107,7 +107,7 @@ async def generate_search_query(question: MetaculusQuestion, model: str) -> str:
     llm = GeneralLlm(
         model=model,
         temperature=0.2,
-        timeout=20,
+        timeout=40,
         allowed_tries=5,
     )
     query = await llm.invoke(prompt)
@@ -126,9 +126,9 @@ async def get_combined_response_openrouter(prompt: str, query: str, model: str):
 
     llm = GeneralLlm(
         model=model,
-        temperature=0.2,
+        temperature=0,
         timeout=40,
-        allowed_tries=2,
+        allowed_tries=5,
     )
     response = await llm.invoke(full_prompt)
     return response
@@ -450,8 +450,8 @@ if __name__ == "__main__":
              ),
              "summarizer": "openrouter/meta-llama/llama-3.3-70b-instruct:free", #"openrouter/openai/gpt-oss-20b",
                  "researcher": GeneralLlm(
-                    model="openrouter/microsoft/mai-ds-r1:free",  # same model as before
-                    temperature=0,  # <-- set temperature to zero
+                    model="openrouter/microsoft/mai-ds-r1:free",
+                    temperature=0, 
                     timeout=40,
                     allowed_tries=5,
                 ),
