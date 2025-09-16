@@ -107,7 +107,7 @@ async def generate_search_query(question: MetaculusQuestion, model: str) -> str:
     llm = GeneralLlm(
         model=model,
         temperature=0.2,
-        timeout=20,
+        timeout=40,
         allowed_tries=5,
     )
     query = await llm.invoke(prompt)
@@ -126,9 +126,9 @@ async def get_combined_response_openrouter(prompt: str, query: str, model: str):
 
     llm = GeneralLlm(
         model=model,
-        temperature=0.2,
+        temperature=0,
         timeout=40,
-        allowed_tries=2,
+        allowed_tries=5,
     )
     response = await llm.invoke(full_prompt)
     return response
@@ -444,12 +444,17 @@ if __name__ == "__main__":
          llms={  
                  "default": GeneralLlm(
                  model= "openrouter/microsoft/mai-ds-r1:free", #"openrouter/anthropic/claude-sonnet-4",
-                 temperature=0.2,
+                 temperature=0.3,
                  timeout=40,
                  allowed_tries=5,
              ),
              "summarizer": "openrouter/meta-llama/llama-3.3-70b-instruct:free", #"openrouter/openai/gpt-oss-20b",
-             "researcher": "openrouter/microsoft/mai-ds-r1:free", #"openrouter/openai/gpt-oss-120b",  
+                 "researcher": GeneralLlm(
+                    model="openrouter/microsoft/mai-ds-r1:free",
+                    temperature=0, 
+                    timeout=40,
+                    allowed_tries=5,
+                ),
              "parser": "openrouter/mistralai/mistral-small-3.2-24b-instruct:free", #"openrouter/openai/gpt-oss-20b",
              "querier": "openrouter/meta-llama/llama-4-scout:free", #"openrouter/openai/gpt-oss-20b",
          },
@@ -498,10 +503,10 @@ if __name__ == "__main__":
             #"https://www.metaculus.com/questions/39110/practice-what-will-be-the-score-ratio-of-the-highest-performing-bot-compared-to-the-top-5-participants-in-the-summer-2025-metaculus-cup/",
             #"https://www.metaculus.com/questions/39056/practice-will-shigeru-ishiba-cease-to-be-prime-minister-of-japan-before-september-2025/",
             #"https://www.metaculus.com/questions/39055/community-prediction-of-this-question-divided-by-2/",
-            #"https://www.metaculus.com/questions/578/human-extinction-by-2100/",  # Human Extinction - Binary
+            "https://www.metaculus.com/questions/578/human-extinction-by-2100/",  # Human Extinction - Binary
             "https://www.metaculus.com/questions/14333/age-of-oldest-human-as-of-2100/",  # Age of Oldest Human - Numeric
-            #"https://www.metaculus.com/questions/22427/number-of-new-leading-ai-labs/",  # Number of New Leading AI Labs - Multiple Choice
-            #"https://www.metaculus.com/c/diffusion-community/38880/how-many-us-labor-strikes-due-to-ai-in-2029/",  # Number of US Labor Strikes Due to AI in 2029 - Discrete
+            "https://www.metaculus.com/questions/22427/number-of-new-leading-ai-labs/",  # Number of New Leading AI Labs - Multiple Choice
+            "https://www.metaculus.com/c/diffusion-community/38880/how-many-us-labor-strikes-due-to-ai-in-2029/",  # Number of US Labor Strikes Due to AI in 2029 - Discrete
         ]
         template_bot.skip_previously_forecasted_questions = False
         questions = [
