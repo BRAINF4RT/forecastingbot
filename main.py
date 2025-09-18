@@ -401,6 +401,14 @@ class FallTemplateBot2025(ForecastBot):
             )
         return upper_bound_message, lower_bound_message
 
+    async def forecast_questions(self, questions, return_exceptions=False):
+        results = []
+        for q in questions:
+            result = await super().forecast_questions([q], return_exceptions=return_exceptions)
+            results.extend(result)
+            logger.info("Completed question, pausing 20 seconds...")
+            await asyncio.sleep(20)  # <-- pause after every completed question
+        return results
 
 if __name__ == "__main__":
     logging.basicConfig(
