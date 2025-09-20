@@ -454,14 +454,14 @@ if __name__ == "__main__":
                  model= "openrouter/microsoft/mai-ds-r1:free", #"openrouter/anthropic/claude-sonnet-4",
                  temperature=0.3,
                  timeout=40,
-                 allowed_tries=5,
+                 allowed_tries=10,
              ),
              "summarizer": "openrouter/meta-llama/llama-3.3-70b-instruct:free", #"openrouter/openai/gpt-oss-20b",
                  "researcher": GeneralLlm(
                     model="openrouter/microsoft/mai-ds-r1:free",
                     temperature=0, 
                     timeout=40,
-                    allowed_tries=5,
+                    allowed_tries=10,
                 ),
              "parser": "openrouter/mistralai/mistral-small-3.2-24b-instruct:free", #"openrouter/openai/gpt-oss-20b",
              "querier": "openrouter/meta-llama/llama-4-scout:free", #"openrouter/openai/gpt-oss-20b",
@@ -481,6 +481,7 @@ if __name__ == "__main__":
         forecast_reports = seasonal_tournament_reports + minibench_reports
     elif run_mode == "metaculus_cup":
         CURRENT_METACULUS_CUP_ID = 32828
+        template_bot.skip_previously_forecasted_questions = False
         forecast_reports = asyncio.run(
             template_bot.forecast_on_tournament(
                 CURRENT_METACULUS_CUP_ID, return_exceptions=True
@@ -488,6 +489,7 @@ if __name__ == "__main__":
         )
     elif run_mode == "market_pulse":
         MP25Q3_TOURNAMENT_ID = 32773
+        template_bot.skip_previously_forecasted_questions = False
         forecast_reports = asyncio.run(
             template_bot.forecast_on_tournament(
                 MP25Q3_TOURNAMENT_ID, return_exceptions=True
