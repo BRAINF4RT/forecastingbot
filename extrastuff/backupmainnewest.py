@@ -8,7 +8,7 @@ from typing import Literal
 from duckduckgo_search import DDGS
 ddgs = DDGS()
 
-def search_internet(query: str, max_results: int = 50, batch_size: int = 10):
+def search_internet(query: str, max_results: int = 50, batch_size: int = 10, log_raw: bool = True, do_dummy: bool = True):
     all_results = []
     seen_urls = set()
     modifiers = [
@@ -23,21 +23,35 @@ def search_internet(query: str, max_results: int = 50, batch_size: int = 10):
         " trends report", " analytical", " observations", " analysis report", " monitoring",
         " deep dive", " examination", " inspection", " briefing", " updates"
     ]
+    
     try:
+        if do_dummy:
+            dummy_query = "test"
+            for _ in range(batch_size):
+                _ = list(ddgs.text(dummy_query, max_results=50))
+                _ = list(ddgs.news(dummy_query, max_results=50))
+            time.sleep(1)
         unused_modifiers = modifiers.copy()
         random.shuffle(unused_modifiers)
         while len(all_results) < max_results:
-            results = []
             if len(unused_modifiers) < batch_size:
                 unused_modifiers = modifiers.copy()
                 random.shuffle(unused_modifiers)
             batch_modifiers = unused_modifiers[:batch_size]
             unused_modifiers = unused_modifiers[batch_size:]
+            results = []
             for modifier in batch_modifiers:
                 var_query = f"{query}{modifier}"
-                results.extend(ddgs.text(var_query, max_results=1))
+                raw_text_results = list(ddgs.text(var_query, max_results=1))
+                raw_news_results = list(ddgs.news(var_query, max_results=1))
+                if log_raw:
+                    print(f"[RAW SEARCH] Query: '{var_query}' | Text results: {len(raw_text_results)}, News results: {len(raw_news_results)}")
+                    print("Text results:", raw_text_results)
+                    print("News results:", raw_news_results)
+                results.extend(raw_text_results)
+                results.extend(raw_news_results)
             for r in results:
-                if "body" in r and r["href"] not in seen_urls:
+                if "href" in r and r["href"] not in seen_urls:
                     all_results.append(r)
                     seen_urls.add(r["href"])
             if not results:
@@ -45,6 +59,7 @@ def search_internet(query: str, max_results: int = 50, batch_size: int = 10):
             time.sleep(1)
         return all_results[:max_results]
     except Exception as e:
+        print(f"Error searching internet: {e}")
         return all_results
         
 from forecasting_tools import (
@@ -75,7 +90,7 @@ async def generate_search_query(question: MetaculusQuestion, model: str) -> str:
     Given a Metaculus prediction question, create a short search query (MAX 25 words) that captures the key
     entities, relevant numbers, and concepts. Avoid copying the question word-for-word. Focus on what
     someone would type in a search engine to find information that could help answer the question. Try to
-    avoid words in your output that could bring up irrelevent information.
+    avoid words in your output that could bring up irrelevent information. 
 
     Question Title:
     {question.question_text}
@@ -86,14 +101,14 @@ async def generate_search_query(question: MetaculusQuestion, model: str) -> str:
     More info:
     {question.fine_print}
 
-    Return ONLY the final search query.
+    You must output ONLY the final search query, no reasoning or explanation, ONLY the final generated search query.
     """
 
     llm = GeneralLlm(
         model=model,
         temperature=0.2,
-        timeout=20,
-        allowed_tries=2,
+        timeout=40,
+        allowed_tries=5,
     )
     query = await llm.invoke(prompt)
     query = query.strip() 
@@ -103,7 +118,6 @@ async def generate_search_query(question: MetaculusQuestion, model: str) -> str:
 async def get_combined_response_openrouter(prompt: str, query: str, model: str):
     search_results = search_internet(query)
     search_content = "\n".join([result['body'] for result in search_results])
-
     full_prompt = f"""{prompt}
 
     Additional Internet Search Results:
@@ -112,13 +126,12 @@ async def get_combined_response_openrouter(prompt: str, query: str, model: str):
 
     llm = GeneralLlm(
         model=model,
-        temperature=0.2,
+        temperature=0,
         timeout=40,
-        allowed_tries=2,
+        allowed_tries=5,
     )
     response = await llm.invoke(full_prompt)
     return response
-
 
 class FallTemplateBot2025(ForecastBot):
 
@@ -137,15 +150,15 @@ class FallTemplateBot2025(ForecastBot):
                 f"""
                 You are an assistant to a superforecaster.
                 The superforecaster will give you a question they intend to forecast on.
-                To be a great assistant, you generate a very detailed rundown of:
-                1. The most relevant news and most relevant information from searches. 
-                2. Historical precedents: past events, case studies, or reference classes that are related to this question. 
-                   - Identify how often similar events have occurred in the past.
-                   - Highlight similarities and differences between past cases and the present one.
-                Try to diversify your sources, but also ensure that they are reputable.
-                Tell the forecaster what YOU think the question will resolve as and why, however you do not produce forecasts yourself.
+                To be a great assistant, you generate a very detailed rundown of the most relevent information from provided raw search data.
+                Information gathered from community driven, informal social media platforms should be marginalized as they are more likely to hold misinformation.
+                DO NOT put any information in your output about what YOU think the question will resolve as, you do NOT produce forecasts yourself.
+                Try to include as much relevent information in your output as possible from the data, while also adhering to the instructions.
                 Your output prioritises quality information and it can be as large as it needs to be, as long as it gets all the relevent information across.
+                Emphasise more recent information from research, then older information.
 
+                Today is {datetime.now().strftime("%Y-%m-%d")}.
+                
                 Question:
                 {question.question_text}
 
@@ -162,7 +175,7 @@ class FallTemplateBot2025(ForecastBot):
                 research = ""
             else:
                 research_results = []
-                for _ in range(5):
+                for _ in range(3):
                     search_query = await generate_search_query(question, model=self.get_llm("querier"))
                     logger.info(f"Using search query for question {question.page_url}: {search_query}")
                     result = await get_combined_response_openrouter(
@@ -174,7 +187,7 @@ class FallTemplateBot2025(ForecastBot):
                     await asyncio.sleep(3)
                 research = "\n\n".join(research_results)
             return research
-            
+    
     async def _run_forecast_on_binary(
         self, question: BinaryQuestion, research: str
     ) -> ReasonedPrediction[float]:
@@ -207,8 +220,10 @@ class FallTemplateBot2025(ForecastBot):
             (d) A brief description of a scenario that results in a Yes outcome.
 
             You write your rationale remembering that good forecasters put extra weight on the status quo outcome since the world changes slowly most of the time.
+            If the question is going to close WITHIN the next few days, ensure that you put extra weight on that prediction as it will be your last prediction on that question.
             Keep in mind that if you put extra weight on a prediction and your prediction is correct, you will score better. However if your prediction is wrong, you will be penalised harder for adding that confidence.
-
+            Emphasise more recent information from research, then older information.
+            
             The last thing you write is your final answer as: "Probability: ZZ%", 0-100
             """
         )
@@ -256,7 +271,9 @@ class FallTemplateBot2025(ForecastBot):
             (c) A description of an scenario that results in an unexpected outcome.
 
             You write your rationale remembering that (1) good forecasters put extra weight on the status quo outcome since the world changes slowly most of the time, and (2) good forecasters leave some moderate probability on most options to account for unexpected outcomes.
+            If the question is going to close WITHIN the next few days, ensure that you put extra weight on that prediction as it will be your last prediction on that question.
             Keep in mind that if you put extra weight on a prediction and your prediction is correct, you will score better. However if your prediction is wrong, you will be penalised harder for adding that confidence.
+            Emphasise more recent information from research, then older information.
 
             The last thing you write is your final probabilities for the N options in this order {question.options} as:
             Option_A: Probability_A
@@ -331,7 +348,9 @@ class FallTemplateBot2025(ForecastBot):
             (f) A brief description of an unexpected scenario that results in a high outcome.
 
             You remind yourself that good forecasters are humble and set wide 90/10 confidence intervals to account for unknown unknowns.
+            If the question is going to close WITHIN the next few days, ensure that you put extra weight on that prediction as it will be your last prediction on that question. 
             Keep in mind that if you put extra weight on a prediction and your prediction is correct, you will score better. However if your prediction is wrong, you will be penalised harder for adding that confidence.
+            Emphasise more recent information from research, then older information.
 
             The last thing you write is your final answer as:
             "
@@ -382,6 +401,14 @@ class FallTemplateBot2025(ForecastBot):
             )
         return upper_bound_message, lower_bound_message
 
+    async def forecast_questions(self, questions, return_exceptions=False):
+        results = []
+        for q in questions:
+            result = await super().forecast_questions([q], return_exceptions=return_exceptions)
+            results.extend(result)
+            logger.info("Completed question, pausing 20 seconds...")
+            await asyncio.sleep(20)  # <-- pause after every completed question
+        return results
 
 if __name__ == "__main__":
     logging.basicConfig(
@@ -401,21 +428,22 @@ if __name__ == "__main__":
     parser.add_argument(
         "--mode",
         type=str,
-        choices=["tournament", "metaculus_cup", "test_questions", "market_pulse",],
+        choices=["tournament", "metaculus_cup", "test_questions", "market_pulse", "colombia_wage",],
         default="tournament",
         help="Specify the run mode (default: tournament)",
     )
     args = parser.parse_args()
-    run_mode: Literal["tournament", "metaculus_cup", "test_questions", "market_pulse",] = args.mode
+    run_mode: Literal["tournament", "metaculus_cup", "test_questions", "market_pulse", "colombia_wage",] = args.mode
     assert run_mode in [
         "tournament",
         "metaculus_cup",
         "test_questions",
         "market_pulse",
+        "colombia_wage",
     ], "Invalid run mode"
 
     template_bot = FallTemplateBot2025(
-        research_reports_per_question=2,
+        research_reports_per_question=1,
         predictions_per_research_report=5,
         use_research_summary_to_forecast=False,
         publish_reports_to_metaculus=True,
@@ -423,15 +451,20 @@ if __name__ == "__main__":
         skip_previously_forecasted_questions=True,
          llms={  
                  "default": GeneralLlm(
-                 model="openrouter/anthropic/claude-sonnet-4",
-                 temperature=0.2,
+                 model= "openrouter/microsoft/mai-ds-r1:free", #"openrouter/anthropic/claude-sonnet-4",
+                 temperature=0.3,
                  timeout=40,
-                 allowed_tries=2,
+                 allowed_tries=10,
              ),
-             "summarizer": "openrouter/openai/gpt-oss-20b",
-             "researcher": "openrouter/openai/gpt-oss-120b",  
-             "parser": "openrouter/openai/gpt-oss-20b",
-             "querier": "openrouter/openai/gpt-oss-20b",
+             "summarizer": "openrouter/meta-llama/llama-3.3-70b-instruct:free", #"openrouter/openai/gpt-oss-20b",
+                 "researcher": GeneralLlm(
+                    model="openrouter/microsoft/mai-ds-r1:free",
+                    temperature=0, 
+                    timeout=40,
+                    allowed_tries=10,
+                ),
+             "parser": "openrouter/mistralai/mistral-small-3.2-24b-instruct:free", #"openrouter/openai/gpt-oss-20b",
+             "querier": "openrouter/meta-llama/llama-4-scout:free", #"openrouter/openai/gpt-oss-20b",
          },
     )         
     if run_mode == "tournament":
@@ -447,29 +480,43 @@ if __name__ == "__main__":
         )
         forecast_reports = seasonal_tournament_reports + minibench_reports
     elif run_mode == "metaculus_cup":
+        CURRENT_METACULUS_CUP_ID = 32828
         template_bot.skip_previously_forecasted_questions = False
         forecast_reports = asyncio.run(
             template_bot.forecast_on_tournament(
-                MetaculusApi.CURRENT_METACULUS_CUP_ID, return_exceptions=True
+                CURRENT_METACULUS_CUP_ID, return_exceptions=True
             )
         )
     elif run_mode == "market_pulse":
         MP25Q3_TOURNAMENT_ID = 32773
+        template_bot.skip_previously_forecasted_questions = False
         forecast_reports = asyncio.run(
             template_bot.forecast_on_tournament(
                 MP25Q3_TOURNAMENT_ID, return_exceptions=True
             )
-        )       
+        )
+    elif run_mode == "colombia_wage":
+        EXAMPLE_QUESTIONS = [
+            "https://www.metaculus.com/questions/39330/what-will-be-the-percentage-increase-for-the-minimum-wage-in-colombia-for-2026/",
+        ]
+        template_bot.skip_previously_forecasted_questions = False
+        questions = [
+            MetaculusApi.get_question_by_url(question_url)
+            for question_url in EXAMPLE_QUESTIONS
+        ]
+        forecast_reports = asyncio.run(
+            template_bot.forecast_questions(questions, return_exceptions=True)
+        )      
     elif run_mode == "test_questions":
         EXAMPLE_QUESTIONS = [
-            "https://www.metaculus.com/questions/39109/which-party-will-lead-tasmania/",
-            "https://www.metaculus.com/questions/39110/practice-what-will-be-the-score-ratio-of-the-highest-performing-bot-compared-to-the-top-5-participants-in-the-summer-2025-metaculus-cup/",
-            "https://www.metaculus.com/questions/39056/practice-will-shigeru-ishiba-cease-to-be-prime-minister-of-japan-before-september-2025/",
-            "https://www.metaculus.com/questions/39055/community-prediction-of-this-question-divided-by-2/",
-            #"https://www.metaculus.com/questions/578/human-extinction-by-2100/",  # Human Extinction - Binary
-            #"https://www.metaculus.com/questions/14333/age-of-oldest-human-as-of-2100/",  # Age of Oldest Human - Numeric
-            #"https://www.metaculus.com/questions/22427/number-of-new-leading-ai-labs/",  # Number of New Leading AI Labs - Multiple Choice
-            #"https://www.metaculus.com/c/diffusion-community/38880/how-many-us-labor-strikes-due-to-ai-in-2029/",  # Number of US Labor Strikes Due to AI in 2029 - Discrete
+            #"https://www.metaculus.com/questions/39109/which-party-will-lead-tasmania/",
+            #"https://www.metaculus.com/questions/39110/practice-what-will-be-the-score-ratio-of-the-highest-performing-bot-compared-to-the-top-5-participants-in-the-summer-2025-metaculus-cup/",
+            #"https://www.metaculus.com/questions/39056/practice-will-shigeru-ishiba-cease-to-be-prime-minister-of-japan-before-september-2025/",
+            #"https://www.metaculus.com/questions/39055/community-prediction-of-this-question-divided-by-2/",
+            "https://www.metaculus.com/questions/578/human-extinction-by-2100/",  # Human Extinction - Binary
+            "https://www.metaculus.com/questions/14333/age-of-oldest-human-as-of-2100/",  # Age of Oldest Human - Numeric
+            "https://www.metaculus.com/questions/22427/number-of-new-leading-ai-labs/",  # Number of New Leading AI Labs - Multiple Choice
+            "https://www.metaculus.com/c/diffusion-community/38880/how-many-us-labor-strikes-due-to-ai-in-2029/",  # Number of US Labor Strikes Due to AI in 2029 - Discrete
         ]
         template_bot.skip_previously_forecasted_questions = False
         questions = [
