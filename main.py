@@ -55,8 +55,6 @@ def fetch_full_page_text(url, max_pages=1, query=None):
             logger.warning(f"[SCRAPER EMPTY] {url} — no usable text blocks found")
     except Exception as e:
         logger.error(f"[SCRAPER ERROR] {url} | {e}")
-
-    # --- DDGS fallback if scraping fails ---
     if query:
         logger.info(f"[SCRAPER FALLBACK] Using DDGS snippets for {url}")
         try:
@@ -70,7 +68,6 @@ def fetch_full_page_text(url, max_pages=1, query=None):
                 return "\n".join(eng_snippets)
         except Exception as e2:
             logger.error(f"[DDGS FALLBACK ERROR] {url} | {e2}")
-
     return ""
 
 def search_internet(query: str, max_results: int = 50, batch_size: int = 10, log_raw: bool = True, do_dummy: bool = True):
@@ -87,8 +84,7 @@ def search_internet(query: str, max_results: int = 50, batch_size: int = 10, log
         " information", " bulletin", " recap", " report summary", " notes",
         " trends report", " analytical", " observations", " analysis report", " monitoring",
         " deep dive", " examination", " inspection", " briefing", " updates"
-    ]
-    
+    ]   
     try:
         if do_dummy:
             dummy_query = "test"
