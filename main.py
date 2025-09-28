@@ -49,11 +49,16 @@ def fetch_full_page_text(url, max_pages=1, query=None):
             if t and len(t) >= 50 and is_mostly_english(t):
                 blocks.append(t)
         if blocks:
+            logger.info(f"[SCRAPER SUCCESS] {url} — extracted {len(blocks)} text blocks")
             return "\n".join(dict.fromkeys(blocks))
+        else:
+            logger.warning(f"[SCRAPER EMPTY] {url} — no usable text blocks found")
     except Exception as e:
-        print(f"Error fetching {url}: {e}")
+        logger.error(f"[SCRAPER ERROR] {url} | {e}")
+
+    # --- DDGS fallback if scraping fails ---
     if query:
-        print("Using DDGS fallback...")
+        logger.info(f"[SCRAPER FALLBACK] Using DDGS snippets for {url}")
         try:
             snippets = list(ddgs.text(query, max_results=10))
             eng_snippets = []
@@ -64,7 +69,8 @@ def fetch_full_page_text(url, max_pages=1, query=None):
             if eng_snippets:
                 return "\n".join(eng_snippets)
         except Exception as e2:
-            print(f"DDGS fallback failed: {e2}")
+            logger.error(f"[DDGS FALLBACK ERROR] {url} | {e2}")
+
     return ""
 
 def search_internet(query: str, max_results: int = 50, batch_size: int = 10, log_raw: bool = True, do_dummy: bool = True):
@@ -115,7 +121,10 @@ def search_internet(query: str, max_results: int = 50, batch_size: int = 10, log
                     cleaned = sanitize_text_for_llm(full_text)
                     if cleaned and len(cleaned) > 300 and is_mostly_english(cleaned, threshold=0.85):
                         r["body"] = cleaned
-                        logger.info(f"[SCRAPED] URL: {r['href']}\n{cleaned[:500]}...\n")
+                        logger.info(f"[SCRAPED CONTENT] {r['href']} | {len(cleaned)} chars kept")
+                        logger.debug(f"[SCRAPED PREVIEW] {cleaned[:500]}...\n")
+                    else:
+                        logger.warning(f"[SCRAPED REJECTED] {r['href']} — too short or non-English")
                     all_results.append(r)
                     seen_urls.add(r["href"])
             if not results:
