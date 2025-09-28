@@ -3,10 +3,72 @@ import asyncio
 import logging
 import time
 import random
+import requests
+import re
+import unicodedata
+from urllib.parse import urljoin
+from bs4 import BeautifulSoup
 from datetime import datetime
 from typing import Literal
 from duckduckgo_search import DDGS
 ddgs = DDGS()
+
+def sanitize_text_for_llm(text: str) -> str:
+    if not text:
+        return ""
+    text = unicodedata.normalize('NFKC', text)
+    text = re.sub(r'[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]', '', text)
+    emoji_pattern = re.compile(
+        "[" "\U0001F600-\U0001F64F" "\U0001F300-\U0001F5FF"
+        "\U0001F680-\U0001F6FF" "\U0001F1E0-\U0001F1FF"
+        "\U00002500-\U00002BEF" "\U00002702-\U000027B0"
+        "\U000024C2-\U0001F251" "]+", flags=re.UNICODE
+    )
+    text = emoji_pattern.sub("", text)
+    text = ''.join(c for c in text if c.isprintable())
+    return re.sub(r'\s+', ' ', text).strip()
+
+def is_mostly_english(text: str, threshold: float = 0.9) -> bool:
+    if not text:
+        return False
+    english_chars = sum(1 for c in text if c.isascii() and (c.isalpha() or c.isspace()))
+    ratio = english_chars / max(1, len(text))
+    return ratio >= threshold
+
+def fetch_full_page_text(url, max_pages=1, query=None):
+    try:
+        resp = requests.get(url, timeout=10)
+        if resp.encoding is None:
+            resp.encoding = resp.apparent_encoding
+        soup = BeautifulSoup(resp.text, 'html.parser')
+        for tag in soup(['script', 'style', 'noscript']):
+            tag.decompose()
+        blocks = []
+        for el in soup.find_all(['p', 'article', 'li']):
+            t = el.get_text(separator=' ', strip=True)
+            if t and len(t) >= 50 and is_mostly_english(t):
+                blocks.append(t)
+        if blocks:
+            logger.info(f"[SCRAPER SUCCESS] {url} — extracted {len(blocks)} text blocks")
+            return "\n".join(dict.fromkeys(blocks))
+        else:
+            logger.warning(f"[SCRAPER EMPTY] {url} — no usable text blocks found")
+    except Exception as e:
+        logger.error(f"[SCRAPER ERROR] {url} | {e}")
+    if query:
+        logger.info(f"[SCRAPER FALLBACK] Using DDGS snippets for {url}")
+        try:
+            snippets = list(ddgs.text(query, max_results=10))
+            eng_snippets = []
+            for s in snippets:
+                body = sanitize_text_for_llm(s.get('body', ''))
+                if body and is_mostly_english(body):
+                    eng_snippets.append(body)
+            if eng_snippets:
+                return "\n".join(eng_snippets)
+        except Exception as e2:
+            logger.error(f"[DDGS FALLBACK ERROR] {url} | {e2}")
+    return ""
 
 def search_internet(query: str, max_results: int = 50, batch_size: int = 10, log_raw: bool = True, do_dummy: bool = True):
     all_results = []
@@ -22,8 +84,7 @@ def search_internet(query: str, max_results: int = 50, batch_size: int = 10, log
         " information", " bulletin", " recap", " report summary", " notes",
         " trends report", " analytical", " observations", " analysis report", " monitoring",
         " deep dive", " examination", " inspection", " briefing", " updates"
-    ]
-    
+    ]   
     try:
         if do_dummy:
             dummy_query = "test"
@@ -52,6 +113,14 @@ def search_internet(query: str, max_results: int = 50, batch_size: int = 10, log
                 results.extend(raw_news_results)
             for r in results:
                 if "href" in r and r["href"] not in seen_urls:
+                    full_text = fetch_full_page_text(r["href"], query=r.get("body", None))
+                    cleaned = sanitize_text_for_llm(full_text)
+                    if cleaned and len(cleaned) > 300 and is_mostly_english(cleaned, threshold=0.85):
+                        r["body"] = cleaned
+                        logger.info(f"[SCRAPED CONTENT] {r['href']} | {len(cleaned)} chars kept")
+                        logger.debug(f"[SCRAPED PREVIEW] {cleaned[:500]}...\n")
+                    else:
+                        logger.warning(f"[SCRAPED REJECTED] {r['href']} — too short or non-English")
                     all_results.append(r)
                     seen_urls.add(r["href"])
             if not results:
@@ -401,6 +470,14 @@ class FallTemplateBot2025(ForecastBot):
             )
         return upper_bound_message, lower_bound_message
 
+    async def forecast_questions(self, questions, return_exceptions=False):
+        results = []
+        for q in questions:
+            result = await super().forecast_questions([q], return_exceptions=return_exceptions)
+            results.extend(result)
+            logger.info("Completed question, pausing 20 seconds...")
+            await asyncio.sleep(20)  # <-- pause after every completed question
+        return results
 
 if __name__ == "__main__":
     logging.basicConfig(
@@ -446,14 +523,14 @@ if __name__ == "__main__":
                  model= "openrouter/microsoft/mai-ds-r1:free", #"openrouter/anthropic/claude-sonnet-4",
                  temperature=0.3,
                  timeout=40,
-                 allowed_tries=5,
+                 allowed_tries=10,
              ),
              "summarizer": "openrouter/meta-llama/llama-3.3-70b-instruct:free", #"openrouter/openai/gpt-oss-20b",
                  "researcher": GeneralLlm(
                     model="openrouter/microsoft/mai-ds-r1:free",
                     temperature=0, 
                     timeout=40,
-                    allowed_tries=5,
+                    allowed_tries=10,
                 ),
              "parser": "openrouter/mistralai/mistral-small-3.2-24b-instruct:free", #"openrouter/openai/gpt-oss-20b",
              "querier": "openrouter/meta-llama/llama-4-scout:free", #"openrouter/openai/gpt-oss-20b",
@@ -473,6 +550,7 @@ if __name__ == "__main__":
         forecast_reports = seasonal_tournament_reports + minibench_reports
     elif run_mode == "metaculus_cup":
         CURRENT_METACULUS_CUP_ID = 32828
+        template_bot.skip_previously_forecasted_questions = False
         forecast_reports = asyncio.run(
             template_bot.forecast_on_tournament(
                 CURRENT_METACULUS_CUP_ID, return_exceptions=True
@@ -480,6 +558,7 @@ if __name__ == "__main__":
         )
     elif run_mode == "market_pulse":
         MP25Q3_TOURNAMENT_ID = 32773
+        template_bot.skip_previously_forecasted_questions = False
         forecast_reports = asyncio.run(
             template_bot.forecast_on_tournament(
                 MP25Q3_TOURNAMENT_ID, return_exceptions=True
