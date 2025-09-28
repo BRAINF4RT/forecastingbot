@@ -36,34 +36,22 @@ def is_mostly_english(text: str, threshold: float = 0.9) -> bool:
     return ratio >= threshold
 
 def fetch_full_page_text(url, max_pages=1, query=None):
-    """
-    Fetch main text from a webpage, fallback to DDGS snippets if scraping fails.
-    """
     try:
         resp = requests.get(url, timeout=10)
         if resp.encoding is None:
             resp.encoding = resp.apparent_encoding
         soup = BeautifulSoup(resp.text, 'html.parser')
-
-        # Remove non-visible/script content
         for tag in soup(['script', 'style', 'noscript']):
             tag.decompose()
-
-        # Collect text blocks
         blocks = []
         for el in soup.find_all(['p', 'article', 'li']):
             t = el.get_text(separator=' ', strip=True)
             if t and len(t) >= 50 and is_mostly_english(t):
                 blocks.append(t)
-
-        # Deduplicate while preserving order
         if blocks:
             return "\n".join(dict.fromkeys(blocks))
-
     except Exception as e:
         print(f"Error fetching {url}: {e}")
-
-    # --- ✅ DDGS fallback if scraping fails ---
     if query:
         print("Using DDGS fallback...")
         try:
@@ -77,9 +65,7 @@ def fetch_full_page_text(url, max_pages=1, query=None):
                 return "\n".join(eng_snippets)
         except Exception as e2:
             print(f"DDGS fallback failed: {e2}")
-
     return ""
-
 
 def search_internet(query: str, max_results: int = 50, batch_size: int = 10, log_raw: bool = True, do_dummy: bool = True):
     all_results = []
@@ -125,11 +111,11 @@ def search_internet(query: str, max_results: int = 50, batch_size: int = 10, log
                 results.extend(raw_news_results)
             for r in results:
                 if "href" in r and r["href"] not in seen_urls:
-                    # Try to replace snippet with full scraped text
                     full_text = fetch_full_page_text(r["href"], query=r.get("body", None))
                     cleaned = sanitize_text_for_llm(full_text)
                     if cleaned and len(cleaned) > 300 and is_mostly_english(cleaned, threshold=0.85):
                         r["body"] = cleaned
+                        logger.info(f"[SCRAPED] URL: {r['href']}\n{cleaned[:500]}...\n")
                     all_results.append(r)
                     seen_urls.add(r["href"])
             if not results:
