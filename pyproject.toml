@@ -17,10 +17,10 @@ python-dotenv = "^1.0.1"
 forecasting-tools = "^0.2.54"
 duckduckgo-search = "^6.2.7"
 beautifulsoup4 = "^4.12.3"
-transformers = "^4.45.0"
-torch = {version = "^2.4.0", source = "pytorch-cpu"}
-accelerate = "^0.34.2"
-sentencepiece = "^0.2.0"
+#transformers = "^4.45.0"
+#torch = {version = "^2.4.0", source = "pytorch-cpu"}
+#accelerate = "^0.34.2"
+#sentencepiece = "^0.2.0"
 
 [tool.poetry.group.dev.dependencies]
 ipykernel = "^6.29.5"
@@ -29,8 +29,8 @@ ipykernel = "^6.29.5"
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
 
-[[tool.poetry.source]]
-name = "pytorch-cpu"
-url = "https://download.pytorch.org/whl/cpu"
-default = false
-secondary = true
+#[[tool.poetry.source]]
+#name = "pytorch-cpu"
+#url = "https://download.pytorch.org/whl/cpu"
+#default = false
+#secondary = true
