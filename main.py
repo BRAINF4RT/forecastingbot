@@ -6,36 +6,12 @@ import random
 import requests
 import re
 import unicodedata
-import torch
 from urllib.parse import urljoin
 from bs4 import BeautifulSoup
 from datetime import datetime
 from typing import Literal
 from duckduckgo_search import DDGS
-from transformers import AutoTokenizer, AutoModelForCausalLM
 ddgs = DDGS()
-
-class LocalForecastingLLM:
-    def __init__(self, model_name="haphazardlyinc/ForecastingGraniteFinal", device=None):
-        self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
-        print(f"Loading {model_name} on {self.device}...")
-        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
-        self.model = AutoModelForCausalLM.from_pretrained(
-            model_name,
-            torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
-        ).to(self.device)
-
-    async def invoke(self, prompt: str, max_new_tokens: int = 256, temperature: float = 0.7):
-        inputs = self.tokenizer(prompt, return_tensors="pt").to(self.device)
-        with torch.no_grad():
-            outputs = self.model.generate(
-                **inputs,
-                max_new_tokens=max_new_tokens,
-                temperature=temperature,
-                top_p=0.95,
-                do_sample=True,
-            )
-        return self.tokenizer.decode(outputs[0], skip_special_tokens=True).strip()
 
 def sanitize_text_for_llm(text: str) -> str:
     if not text:
@@ -544,7 +520,10 @@ if __name__ == "__main__":
         skip_previously_forecasted_questions=True,
          llms={  
                  "default": GeneralLlm(
-                 model= LocalForecastingLLM(),
+                 model= "openrouter/microsoft/mai-ds-r1:free", #"openrouter/anthropic/claude-sonnet-4",
+                 temperature=0.3,
+                 timeout=40,
+                 allowed_tries=10,
              ),
              "summarizer": "openrouter/meta-llama/llama-3.3-70b-instruct:free", #"openrouter/openai/gpt-oss-20b",
                  "researcher": GeneralLlm(
