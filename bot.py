@@ -24,10 +24,19 @@ LLM architecture:
         v
     forecasting_tools structured parsing
         |
-        +--> Laguna S 2.1 :free on failure
+        +--> Nex-N2.5-Pro :free
+        +--> Nex-N2.5-Mini :free on failure
         |
         v
     Metaculus
+
+NOTE: the structured-parsing step deliberately does NOT reuse the
+Nemotron -> Laguna pair used for research/reasoning. Nemotron 3 Ultra does
+not advertise native `structured_outputs` support on OpenRouter, which was
+causing forecasting_tools' strict JSON extractor to come back empty
+("<<REQUESTED TYPE WAS NOT FOUND IN TEXT>>") often enough to sink whole
+questions. The Nex-N2.5 pair has confirmed native structured-output
+support and is used for parsing only.
 """
 
 from __future__ import annotations
@@ -40,6 +49,7 @@ from typing import Any
 from forecasting_tools import (
     BinaryPrediction,
     BinaryQuestion,
+    DateQuestion,
     ForecastBot,
     GeneralLlm,
     MetaculusQuestion,
@@ -69,6 +79,13 @@ logger = logging.getLogger(__name__)
 PRIMARY_LLM = f"openrouter/{PRIMARY_MODEL}"
 FALLBACK_LLM = f"openrouter/{FALLBACK_MODEL}"
 
+# Dedicated parser models: these need reliable native structured-output
+# support, which Nemotron/Laguna do not advertise. Verified live on
+# OpenRouter's free tier -- re-check https://openrouter.ai/models?max_price=0
+# periodically since the free roster rotates.
+PARSER_PRIMARY_LLM = "openrouter/nex-agi/nex-n2.5-pro:free"
+PARSER_FALLBACK_LLM = "openrouter/nex-agi/nex-n2.5-mini:free"
+
 # Maximum number of forecasting-tools / LiteLLM calls allowed at once.
 #
 # This is separate from the direct OpenRouter semaphore in
@@ -83,12 +100,6 @@ _GENERAL_LLM_SEMAPHORE = asyncio.Semaphore(
 class FallbackGeneralLlm(GeneralLlm):
     """
     GeneralLlm wrapper with explicit primary -> fallback behaviour.
-
-    Primary:
-        Nemotron 3 Ultra
-
-    Fallback:
-        Laguna S 2.1
 
     The wrapper deliberately uses allowed_tries=1 on each underlying model.
     The wrapper itself controls the fallback so that we don't get multiple
@@ -130,7 +141,7 @@ class FallbackGeneralLlm(GeneralLlm):
         **kwargs: Any,
     ) -> Any:
         """
-        Try Nemotron once, then Laguna once.
+        Try the primary model once, then the fallback once.
 
         The forecasting_tools GeneralLlm itself has allowed_tries=1 so this
         wrapper is the component responsible for model failover.
@@ -141,7 +152,7 @@ class FallbackGeneralLlm(GeneralLlm):
         async with _GENERAL_LLM_SEMAPHORE:
             try:
                 logger.debug(
-                    "Calling primary forecasting LLM: %s",
+                    "Calling primary LLM: %s",
                     self._primary_model_name,
                 )
 
@@ -155,7 +166,7 @@ class FallbackGeneralLlm(GeneralLlm):
                 primary_error = exc
 
                 logger.warning(
-                    "Primary forecasting model failed: %s. "
+                    "Primary model failed: %s. "
                     "Falling back to %s.",
                     self._primary_model_name,
                     self._fallback_model_name,
@@ -169,7 +180,7 @@ class FallbackGeneralLlm(GeneralLlm):
                 )
 
                 logger.info(
-                    "Fallback forecasting model succeeded: %s",
+                    "Fallback model succeeded: %s",
                     self._fallback_model_name,
                 )
 
@@ -177,7 +188,7 @@ class FallbackGeneralLlm(GeneralLlm):
 
             except Exception as fallback_error:
                 raise RuntimeError(
-                    "Both forecasting LLMs failed.\n"
+                    "Both LLMs failed.\n"
                     f"Primary ({self._primary_model_name}): "
                     f"{primary_error!r}\n"
                     f"Fallback ({self._fallback_model_name}): "
@@ -189,21 +200,16 @@ class OpenRouterForecastBot(ForecastBot):
     """
     Metaculus forecasting bot.
 
-    All forecasting_tools LLM purposes explicitly use the same
-    Nemotron -> Laguna fallback wrapper.
-
-    This prevents forecasting_tools from silently selecting OpenAI models
-    when a purpose is not manually configured.
+    Every forecasting_tools LLM purpose is explicitly configured so that
+    ForecastBot never silently falls back to its own defaults (e.g.
+    GPT-4o / GPT-4o-mini / search-preview) for an unconfigured purpose.
     """
 
-    _structure_output_validation_samples = 1
+    _structure_output_validation_samples = 2
 
     def _llm_config_defaults(self) -> dict[str, GeneralLlm]:
         """
         Explicitly configure every forecasting_tools LLM purpose.
-
-        This is important because ForecastBot otherwise fills missing purposes
-        with its own defaults such as GPT-4o / GPT-4o-mini / search-preview.
         """
 
         return {
@@ -226,8 +232,8 @@ class OpenRouterForecastBot(ForecastBot):
                 timeout=240,
             ),
             "parser": FallbackGeneralLlm(
-                primary_model=PRIMARY_LLM,
-                fallback_model=FALLBACK_LLM,
+                primary_model=PARSER_PRIMARY_LLM,
+                fallback_model=PARSER_FALLBACK_LLM,
                 temperature=0.0,
                 timeout=240,
             ),
@@ -563,11 +569,124 @@ class OpenRouterForecastBot(ForecastBot):
             reasoning=reasoning,
         )
 
+    ##################################### DATE #####################################
+
+    async def _run_forecast_on_date(
+        self,
+        question: DateQuestion,
+        research: str,
+    ) -> ReasonedPrediction[NumericDistribution]:
+
+        upper_bound_message, lower_bound_message = (
+            self._create_upper_and_lower_bound_messages(question)
+        )
+
+        prompt = clean_indents(
+            f"""
+            You are a professional probabilistic forecaster.
+
+            QUESTION:
+            {question.question_text}
+
+            BACKGROUND:
+            {question.background_info}
+
+            RESOLUTION CRITERIA:
+            {question.resolution_criteria}
+
+            FINE PRINT:
+            {question.fine_print}
+
+            RESEARCH:
+            {research}
+
+            TODAY:
+            {datetime.now().strftime("%Y-%m-%d")}
+
+            QUESTION LOWER BOUND:
+            {lower_bound_message}
+
+            QUESTION UPPER BOUND:
+            {upper_bound_message}
+
+            Consider:
+            (a) The time remaining until the outcome is known.
+            (b) The status quo / current trajectory.
+            (c) Historical base rates for similar events.
+            (d) Expert and market expectations where available.
+            (e) A plausible early-outcome scenario.
+            (f) A plausible late-outcome scenario.
+            (g) Unknown unknowns.
+
+            Be appropriately uncertain. Good forecasters usually need wider
+            date ranges than their first instinct suggests.
+
+            Formatting requirements:
+            - Dates must be in ISO format: YYYY-MM-DD.
+            - Percentile dates must increase monotonically (P10 earliest,
+              P90 latest).
+            - Do not invent unsupported precision.
+
+            Your final answer MUST contain exactly:
+
+            Percentile 10: YYYY-MM-DD
+            Percentile 20: YYYY-MM-DD
+            Percentile 40: YYYY-MM-DD
+            Percentile 60: YYYY-MM-DD
+            Percentile 80: YYYY-MM-DD
+            Percentile 90: YYYY-MM-DD
+            """
+        )
+
+        reasoning = await generate_forecast_reasoning(prompt)
+
+        logger.info(
+            "Forecast reasoning for %s: %s",
+            question.page_url,
+            reasoning[:1000],
+        )
+
+        parsing_instructions = clean_indents(
+            f"""
+            The question is a DATE question:
+
+            {question.question_text}
+
+            When parsing:
+
+            - Parse each percentile value as an ISO date (YYYY-MM-DD).
+            - If the target schema requires a numeric value, convert the
+              parsed date to a Unix timestamp (seconds since epoch, UTC).
+            - Only use percentile values explicitly supported by the
+              model's final answer.
+            - Preserve the requested percentile labels.
+            - Do not invent missing percentile values.
+            """
+        )
+
+        percentile_list: list[Percentile] = await structure_output(
+            reasoning,
+            list[Percentile],
+            model=self._parser_llm(),
+            additional_instructions=parsing_instructions,
+            num_validation_samples=self._structure_output_validation_samples,
+        )
+
+        prediction = NumericDistribution.from_question(
+            percentile_list,
+            question,
+        )
+
+        return ReasonedPrediction(
+            prediction_value=prediction,
+            reasoning=reasoning,
+        )
+
     ##################################### HELPERS #####################################
 
     def _create_upper_and_lower_bound_messages(
         self,
-        question: NumericQuestion,
+        question: NumericQuestion | DateQuestion,
     ) -> tuple[str, str]:
 
         upper_bound_number = (
@@ -582,7 +701,7 @@ class OpenRouterForecastBot(ForecastBot):
             else question.lower_bound
         )
 
-        unit_of_measure = question.unit_of_measure
+        unit_of_measure = getattr(question, "unit_of_measure", None) or "date"
 
         if question.open_upper_bound:
             upper_bound_message = (
@@ -615,7 +734,10 @@ class OpenRouterForecastBot(ForecastBot):
         Return the explicitly configured parser.
 
         The parser itself uses:
-            Nemotron -> Laguna
+            Nex-N2.5-Pro -> Nex-N2.5-Mini
+        (native structured-output support; deliberately not the
+        Nemotron/Laguna pair used for research and reasoning -- see the
+        module docstring for why).
         """
 
         return self.get_llm("parser", "llm")
