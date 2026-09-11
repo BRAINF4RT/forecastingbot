@@ -1,4 +1,4 @@
-```python
+
 """
 OpenRouter-only Metaculus forecasting bot.
 
@@ -684,4 +684,3 @@ class OpenRouterForecastBot(ForecastBot):
             "parser",
             "llm",
         )
-```
