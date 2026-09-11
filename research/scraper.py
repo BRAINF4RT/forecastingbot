@@ -1,14 +1,7 @@
 """
-Robust web search + scraping layer.
+Web search and scraping helpers.
 
-Search strategy:
-    1. Try multiple DDGS backends independently.
-    2. A failed/rate-limited backend never kills the entire search.
-    3. Deduplicate URLs across backends.
-    4. Block Metaculus URLs entirely.
-    5. Try trafilatura for page extraction.
-    6. Fall back to requests + BeautifulSoup.
-    7. Fall back to the search-result snippet.
+Metaculus pages are explicitly blocked from being accessed by the scraper.
 """
 
 from __future__ import annotations
@@ -34,7 +27,7 @@ USER_AGENT = (
 )
 
 MAX_CHARS_PER_SOURCE = 100000
-.
+
 SEARCH_BACKENDS = (
     "brave",
     "google",
@@ -47,7 +40,7 @@ SEARCH_BACKENDS = (
 SEARCH_DELAY_SECONDS = 0.25
 SCRAPE_TIMEOUT = 12
 
-# Metaculus must never be accessed by the research scraper.
+# Metaculus must never be accessed by the scraper.
 # This blocks the main domain and all subdomains.
 BLOCKED_HOSTS = {
     "metaculus.com",
@@ -72,7 +65,10 @@ def is_blocked_url(url: str) -> bool:
     except Exception:
         return True
 
-    return hostname in BLOCKED_HOSTS or hostname.endswith(".metaculus.com")
+    return (
+        hostname in BLOCKED_HOSTS
+        or hostname.endswith(".metaculus.com")
+    )
 
 
 def _normalise_url(url: str) -> str:
@@ -82,16 +78,17 @@ def _normalise_url(url: str) -> str:
     if not url:
         return ""
 
-    # Remove common tracking parameters.
     if "?" in url:
         base, query = url.split("?", 1)
 
         keep = []
+
         for item in query.split("&"):
             key = item.split("=", 1)[0].lower()
 
             if key.startswith("utm_"):
                 continue
+
             if key in {
                 "fbclid",
                 "gclid",
@@ -111,6 +108,7 @@ def _valid_result(result: dict) -> bool:
     url = result.get("href") or result.get("url") or ""
     title = result.get("title") or ""
     body = result.get("body") or ""
+
     return bool(
         isinstance(url, str)
         and url.strip()
@@ -125,10 +123,8 @@ def ddgs_search(
     """
     Search multiple DDGS backends independently.
 
-    This is intentionally NOT one DDGS().text(..., backend="auto") call.
-
-    A single backend being unavailable must not turn the whole research
-    operation into zero results.
+    A failure from one backend does not prevent other backends
+    from being tried.
     """
 
     query = query.strip()
@@ -220,6 +216,7 @@ def ddgs_search(
 
 
 def scrape_with_trafilatura(url: str) -> str | None:
+    """Fetch and extract article text using trafilatura."""
     try:
         downloaded = trafilatura.fetch_url(url)
 
@@ -249,6 +246,7 @@ def scrape_with_trafilatura(url: str) -> str | None:
 
 
 def scrape_with_bs4(url: str) -> str | None:
+    """Fetch a page and extract paragraph text using BeautifulSoup."""
     try:
         response = requests.get(
             url,
@@ -258,6 +256,14 @@ def scrape_with_bs4(url: str) -> str | None:
         )
 
         response.raise_for_status()
+
+        # Check the final redirected URL as well.
+        if is_blocked_url(response.url):
+            logger.info(
+                "[SCRAPE] Blocked redirect to Metaculus: %s",
+                response.url,
+            )
+            return None
 
         content_type = response.headers.get(
             "content-type",
@@ -344,9 +350,7 @@ def gather_sources(
     """
     Search all supplied queries and return usable sources.
 
-    Search snippets count as usable evidence. This is important because
-    many legitimate sites block automated page fetching while still
-    appearing in search results.
+    Search snippets can be used when the actual page cannot be scraped.
     """
 
     sources: list[ScrapedSource] = []
@@ -390,8 +394,7 @@ def gather_sources(
                 or ""
             )
 
-            # Second safety boundary: even if a blocked URL somehow
-            # reaches gather_sources(), it is discarded here.
+            # Second safety boundary.
             if is_blocked_url(url):
                 logger.info(
                     "[RESEARCH] Skipping blocked Metaculus result: %s",
@@ -404,10 +407,7 @@ def gather_sources(
 
             seen_urls.add(url)
 
-            title = (
-                result.get("title")
-                or url
-            )
+            title = result.get("title") or url
 
             snippet = (
                 result.get("body")
@@ -421,9 +421,7 @@ def gather_sources(
 
             content, method = scrape_url(url)
 
-            # Critical fallback:
-            # if the actual page blocks us, the search engine's snippet
-            # is still usable evidence.
+            # If page scraping fails, use the search-engine snippet.
             if not content and len(snippet) >= 40:
                 content = snippet
                 method = "search_snippet"
@@ -465,6 +463,8 @@ def gather_sources(
 def format_sources_as_markdown(
     sources: list[ScrapedSource],
 ) -> str:
+    """Format gathered sources for the research model."""
+
     if not sources:
         return "NO_RESEARCH_AVAILABLE"
 
