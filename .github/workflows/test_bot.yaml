@@ -28,10 +28,11 @@ jobs:
           installer-parallel: true
 
       - name: Install dependencies
-        run: poetry install --no-interaction --no-root
-
-      - name: Run test questions
-        run: poetry run python main.py --mode test_questions
+        run: |
+          poetry install --no-interaction --no-root
+          poetry run pip install trafilatura beautifulsoup4 ddgs httpx
+            - name: Run test questions
+              run: poetry run python main.py --mode test_questions
 
         env:
           # -------------------------------------------------------------------
