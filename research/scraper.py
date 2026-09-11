@@ -5,9 +5,10 @@ Search strategy:
     1. Try multiple DDGS backends independently.
     2. A failed/rate-limited backend never kills the entire search.
     3. Deduplicate URLs across backends.
-    4. Try trafilatura for page extraction.
-    5. Fall back to requests + BeautifulSoup.
-    6. Fall back to the search-result snippet.
+    4. Block Metaculus URLs entirely.
+    5. Try trafilatura for page extraction.
+    6. Fall back to requests + BeautifulSoup.
+    7. Fall back to the search-result snippet.
 """
 
 from __future__ import annotations
@@ -16,6 +17,7 @@ import logging
 import time
 from dataclasses import dataclass
 from typing import Iterable
+from urllib.parse import urlparse
 
 import requests
 import trafilatura
@@ -47,6 +49,12 @@ SEARCH_BACKENDS = (
 SEARCH_DELAY_SECONDS = 0.25
 SCRAPE_TIMEOUT = 12
 
+# Metaculus must never be accessed by the research scraper.
+# This blocks the main domain and all subdomains.
+BLOCKED_HOSTS = {
+    "metaculus.com",
+}
+
 
 @dataclass
 class ScrapedSource:
@@ -57,6 +65,16 @@ class ScrapedSource:
     content: str = ""
     method: str = ""
     backend: str = ""
+
+
+def is_blocked_url(url: str) -> bool:
+    """Return True if the URL belongs to a blocked host."""
+    try:
+        hostname = (urlparse(url).hostname or "").lower()
+    except Exception:
+        return True
+
+    return hostname in BLOCKED_HOSTS or hostname.endswith(".metaculus.com")
 
 
 def _normalise_url(url: str) -> str:
@@ -76,7 +94,6 @@ def _normalise_url(url: str) -> str:
 
             if key.startswith("utm_"):
                 continue
-
             if key in {
                 "fbclid",
                 "gclid",
@@ -96,7 +113,6 @@ def _valid_result(result: dict) -> bool:
     url = result.get("href") or result.get("url") or ""
     title = result.get("title") or ""
     body = result.get("body") or ""
-
     return bool(
         isinstance(url, str)
         and url.strip()
@@ -155,6 +171,14 @@ def ddgs_search(
                     or result.get("url")
                     or ""
                 )
+
+                # Never allow Metaculus results into the research pipeline.
+                if is_blocked_url(url):
+                    logger.info(
+                        "[SEARCH] Blocked Metaculus result: %s",
+                        url,
+                    )
+                    continue
 
                 if not url or url in seen_urls:
                     continue
@@ -294,6 +318,14 @@ def scrape_with_bs4(url: str) -> str | None:
 def scrape_url(url: str) -> tuple[str, str]:
     """Try multiple extraction methods."""
 
+    # Safety boundary: Metaculus must never be fetched.
+    if is_blocked_url(url):
+        logger.info(
+            "[SCRAPE] Blocked Metaculus URL: %s",
+            url,
+        )
+        return "", "blocked"
+
     text = scrape_with_trafilatura(url)
 
     if text:
@@ -359,6 +391,15 @@ def gather_sources(
                 or result.get("url")
                 or ""
             )
+
+            # Second safety boundary: even if a blocked URL somehow
+            # reaches gather_sources(), it is discarded here.
+            if is_blocked_url(url):
+                logger.info(
+                    "[RESEARCH] Skipping blocked Metaculus result: %s",
+                    url,
+                )
+                continue
 
             if not url or url in seen_urls:
                 continue
