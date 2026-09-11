@@ -33,10 +33,8 @@ USER_AGENT = (
     "Chrome/131.0 Safari/537.36"
 )
 
-MAX_CHARS_PER_SOURCE = 5000
-
-# Keep this deliberately small.
-# The important thing is diversity, not hammering every search engine.
+MAX_CHARS_PER_SOURCE = 100000
+.
 SEARCH_BACKENDS = (
     "brave",
     "google",
