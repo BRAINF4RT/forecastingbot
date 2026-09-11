@@ -1,4 +1,3 @@
-```python
 """
 Entry point for the OpenRouter-only Metaculus forecasting bot.
 
@@ -364,4 +363,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-```
+
