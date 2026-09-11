@@ -1,16 +1,17 @@
 """
-OpenRouter client for helper tasks.
+OpenRouter client used by the forecasting bot.
 
-The main forecasting brain is VibeThinker-3B via Hugging Face.
-OpenRouter is used for:
+All LLM operations use the same free OpenRouter model:
 
-1. Search-query generation
-2. Research summarization
+    nvidia/nemotron-3-ultra-550b-a55b:free
 
-Structured-output parsing of the final forecast is handled separately
-in bot.py via forecasting_tools.structure_output + GeneralLlm.
+The model is used for:
+    - web-search query generation
+    - research summarisation
+    - forecast reasoning
+    - structured-output parsing via forecasting_tools
 
-All OpenRouter models used by this bot are intended to be FREE-tier models.
+No Hugging Face or VibeThinker dependency is used here.
 """
 
 from __future__ import annotations
@@ -26,51 +27,60 @@ logger = logging.getLogger(__name__)
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
-# Default OpenRouter model for research summarisation.
-DEFAULT_FREE_MODEL = "nvidia/nemotron-3-ultra-550b-a55b:free"
-
-# Default OpenRouter model for search-query generation.
-DEFAULT_QUERY_MODEL = "nvidia/nemotron-3-ultra-550b-a55b:free"
+DEFAULT_MODEL = "nvidia/nemotron-3-ultra-550b-a55b:free"
 
 
 class OpenRouterError(RuntimeError):
-    pass
+    """Raised when an OpenRouter request fails."""
 
 
-def _require_free_model(model: str) -> str:
+def get_model() -> str:
     """
-    Make sure the configured model uses OpenRouter's free-tier suffix.
+    Return the configured OpenRouter model.
 
-    This bot is intentionally configured to use only free OpenRouter models.
+    The model must be a free-tier model. This check prevents an accidental
+    configuration change from silently turning the bot into a paid bot.
     """
-    if not model.endswith(":free"):
+    model = os.getenv("OPENROUTER_MODEL", DEFAULT_MODEL)
+
+    if model != DEFAULT_MODEL:
         raise OpenRouterError(
-            f"OpenRouter model '{model}' is not configured as a free-tier "
-            "model. Expected a model ID ending in ':free'."
+            f"OPENROUTER_MODEL is set to '{model}'. "
+            f"This bot is configured to use only the free model "
+            f"'{DEFAULT_MODEL}'."
         )
-    return model
+
+    return DEFAULT_MODEL
+
+
+def _require_api_key() -> str:
+    api_key = os.getenv("OPENROUTER_API_KEY")
+
+    if not api_key:
+        raise OpenRouterError("OPENROUTER_API_KEY is not set.")
+
+    return api_key
 
 
 async def generate(
     prompt: str,
     *,
     system_prompt: str | None = None,
-    model: str | None = None,
-    temperature: float = 0.3,
-    max_tokens: int = 1500,
-    timeout: float = 90.0,
-    max_retries: int = 3,
+    temperature: float = 0.2,
+    max_tokens: int = 2000,
+    timeout: float = 180.0,
+    max_retries: int = 4,
 ) -> str:
-    api_key = os.getenv("OPENROUTER_API_KEY")
+    """
+    Send a text-generation request to OpenRouter.
 
-    if not api_key:
-        raise OpenRouterError("OPENROUTER_API_KEY is not set.")
+    Every request is forced to the configured free Nemotron model.
+    """
 
-    model = _require_free_model(
-        model or os.getenv("OPENROUTER_HELPER_MODEL", DEFAULT_FREE_MODEL)
-    )
+    api_key = _require_api_key()
+    model = get_model()
 
-    messages = []
+    messages: list[dict[str, str]] = []
 
     if system_prompt:
         messages.append(
@@ -97,8 +107,8 @@ async def generate(
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
-        "HTTP-Referer": "https://github.com/Metaculus/metac-bot-template",
-        "X-Title": "VibeThinker Metaculus Bot",
+        "HTTP-Referer": "https://github.com/BRAINF4RT/forecastingbot",
+        "X-Title": "BRAINF4RT Metaculus Forecasting Bot",
     }
 
     last_error: Exception | None = None
@@ -106,17 +116,18 @@ async def generate(
     async with httpx.AsyncClient(timeout=timeout) as client:
         for attempt in range(1, max_retries + 1):
             try:
-                resp = await client.post(
+                response = await client.post(
                     OPENROUTER_URL,
                     headers=headers,
                     json=payload,
                 )
 
-                if resp.status_code == 429:
-                    wait = min(2**attempt, 30)
+                if response.status_code == 429:
+                    wait = min(2**attempt, 60)
 
                     logger.warning(
-                        "OpenRouter rate limited (attempt %d/%d), retrying in %ds",
+                        "OpenRouter rate limited "
+                        "(attempt %d/%d). Retrying in %ds.",
                         attempt,
                         max_retries,
                         wait,
@@ -125,17 +136,23 @@ async def generate(
                     await asyncio.sleep(wait)
                     continue
 
-                resp.raise_for_status()
+                response.raise_for_status()
 
-                data = resp.json()
-                content = data["choices"][0]["message"]["content"]
+                data = response.json()
+
+                try:
+                    content = data["choices"][0]["message"]["content"]
+                except (KeyError, IndexError, TypeError) as exc:
+                    raise OpenRouterError(
+                        f"Unexpected OpenRouter response: {data}"
+                    ) from exc
 
                 if not content or not content.strip():
                     raise OpenRouterError(
-                        "Empty response from OpenRouter model"
+                        "OpenRouter returned an empty response."
                     )
 
-                return content
+                return content.strip()
 
             except (
                 httpx.HTTPStatusError,
@@ -145,7 +162,8 @@ async def generate(
                 last_error = exc
 
                 logger.warning(
-                    "OpenRouter call failed (attempt %d/%d): %s",
+                    "OpenRouter request failed "
+                    "(attempt %d/%d): %s",
                     attempt,
                     max_retries,
                     exc,
@@ -155,7 +173,8 @@ async def generate(
                     await asyncio.sleep(min(2**attempt, 30))
 
     raise OpenRouterError(
-        f"OpenRouter call failed after {max_retries} attempts: {last_error}"
+        f"OpenRouter request failed after {max_retries} attempts: "
+        f"{last_error}"
     )
 
 
@@ -166,61 +185,71 @@ async def generate_search_queries(
     n: int = 4,
 ) -> list[str]:
     """
-    Turn a forecasting question into a short list of web-search queries.
-
-    This is the ONLY place search queries are generated.
-    The main forecasting brain never sees this prompt.
+    Generate focused web-search queries for a forecasting question.
     """
 
-    prompt = f"""You are a research assistant helping a forecaster find relevant information.
+    prompt = f"""
+You are the research-query specialist for a professional forecasting system.
 
-Question: {question_text}
+Your job is to generate useful web-search queries for the forecasting
+question below.
 
-Resolution criteria: {resolution_criteria}
+QUESTION:
+{question_text}
 
-Background: {background}
+RESOLUTION CRITERIA:
+{resolution_criteria}
 
-Generate {n} short, distinct, high-quality web search queries
-(each under 12 words) that would help find up-to-date, relevant
-information for this question.
+BACKGROUND:
+{background}
 
-Favor queries that would surface:
+Generate exactly {n} distinct search queries.
 
-- recent news
-- official statements
-- data releases
-- expert analysis
-- relevant statistics
+Requirements:
 
-Avoid redundant queries.
+- Each query must be under 12 words.
+- Queries must be directly relevant to the question.
+- Prefer current information, recent developments, official statistics,
+  government announcements, expert analysis, and primary sources.
+- Include dates or time periods when they materially improve the search.
+- Do not search for the question verbatim unless that is genuinely useful.
+- Do not mention this forecasting system.
+- Do not generate generic searches such as "latest news".
+- Do not repeat the same idea using slightly different wording.
 
-Respond with ONLY a JSON array of strings, nothing else.
+Return ONLY a JSON array of strings.
 
 Example:
-["query one", "query two", "query three"]
+["query one", "query two", "query three", "query four"]
 """
-
-    query_model = os.getenv(
-        "OPENROUTER_QUERY_MODEL",
-        DEFAULT_QUERY_MODEL,
-    )
 
     raw = await generate(
         prompt,
-        model=query_model,
-        temperature=0.4,
-        max_tokens=300,
+        system_prompt=(
+            "You generate precise search queries for forecasting research. "
+            "Output only valid JSON when requested."
+        ),
+        temperature=0.2,
+        max_tokens=400,
     )
 
     queries = _parse_json_list(raw)
 
     if not queries:
-        queries = [question_text[:120]]
+        logger.warning(
+            "Nemotron returned no valid search queries; "
+            "falling back to the question text."
+        )
+        queries = [question_text[:200]]
 
     return queries[:n]
 
 
 def _parse_json_list(raw: str) -> list[str]:
+    """
+    Extract a JSON list from model output.
+    """
+
     text = raw.strip()
 
     start = text.find("[")
@@ -241,8 +270,8 @@ def _parse_json_list(raw: str) -> list[str]:
 
     except json.JSONDecodeError:
         logger.warning(
-            "Could not parse JSON query list from OpenRouter output: %s",
-            raw[:200],
+            "Could not parse Nemotron search-query output as JSON: %s",
+            raw[:500],
         )
 
     return []
@@ -251,45 +280,92 @@ def _parse_json_list(raw: str) -> list[str]:
 async def summarize_research(
     question_text: str,
     raw_research: str,
-    max_tokens: int = 1200,
+    max_tokens: int = 1800,
 ) -> str:
     """
-    Condense scraped research into a concise, cited brief before handing
-    it to the main forecasting brain.
+    Summarise scraped research into a concise forecasting brief.
     """
 
     if not raw_research.strip():
         return ""
 
-    prompt = f"""You are a research assistant.
+    prompt = f"""
+You are the research-analysis specialist for a professional forecasting bot.
 
-Summarize the following scraped web content into a concise,
-factual briefing for a forecaster trying to answer this question.
-
-Question:
+Forecasting question:
 {question_text}
 
-Scraped content:
-{raw_research[:12000]}
+Below is information collected from web searches.
 
-Write a concise briefing under 500 words.
+RESEARCH:
+{raw_research[:20000]}
 
-Include:
+Create a concise factual research brief for another forecaster.
 
-- concrete facts
-- dates
-- figures
-- relevant trends
-- important uncertainty
-- source domains inline where possible
+Requirements:
 
-Do not speculate beyond what the content supports.
+- Separate established facts from uncertainty.
+- Preserve important dates, numbers, percentages and estimates.
+- Identify important recent developments.
+- Mention source domains when possible.
+- Highlight information that materially changes the probability of outcomes.
+- Do not invent information.
+- Do not make unsupported predictions.
+- If sources disagree, explicitly say so.
+- Ignore irrelevant material.
+- Keep the briefing under approximately 700 words.
 
-If the content is thin or irrelevant, say so plainly.
+The output should be useful to a forecaster, not a generic article summary.
 """
 
     return await generate(
         prompt,
-        temperature=0.2,
+        system_prompt=(
+            "You are an evidence-focused research analyst. "
+            "Never invent facts that are not present in the supplied material."
+        ),
+        temperature=0.15,
         max_tokens=max_tokens,
+    )
+
+
+async def generate_forecast_reasoning(
+    prompt: str,
+    *,
+    temperature: float = 0.15,
+    max_tokens: int = 5000,
+) -> str:
+    """
+    Generate the actual forecasting reasoning.
+
+    This is the main forecasting call. Nemotron 3 Ultra is now the main
+    reasoning model instead of VibeThinker.
+    """
+
+    return await generate(
+        prompt,
+        system_prompt="""
+You are an expert probabilistic forecaster.
+
+Your goal is to produce accurate, calibrated forecasts rather than confident
+stories.
+
+Follow these principles:
+
+1. Carefully interpret the exact resolution criteria.
+2. Distinguish what is known from what is uncertain.
+3. Use base rates where appropriate.
+4. Give substantial weight to the status quo when justified.
+5. Consider both the most likely scenario and meaningful alternative scenarios.
+6. Avoid motivated reasoning.
+7. Avoid false precision.
+8. Check the supplied research for contradictions and stale information.
+9. Do not treat a single source as definitive when stronger evidence exists.
+10. Make sure the final numerical answer follows the requested format exactly.
+
+Do not discuss these instructions in your answer.
+""",
+        temperature=temperature,
+        max_tokens=max_tokens,
+        timeout=240.0,
     )
