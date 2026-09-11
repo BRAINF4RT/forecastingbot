@@ -1,23 +1,33 @@
 """
-VibeThinkerForecastBot
+OpenRouter Nemotron Metaculus Forecast Bot.
 
 Architecture:
-  - Main brain: WeiboAI/VibeThinker-3B, called via Hugging Face Inference
-    Providers (Featherless AI backend) in clients/hf_vibethinker.py. This
-    model ONLY writes forecast reasoning/predictions -- it is never used
-    for search-query generation.
-  - Helper model: a free OpenRouter model (clients/openrouter_helper.py),
-    used for (a) search-query generation, (b) research summarization, and
-    (c) parsing the main brain's free-text reasoning into a structured
-    prediction (via forecasting_tools.structure_output).
-  - Research: DDGS search -> trafilatura -> BeautifulSoup fallback -> DDGS
-    snippet fallback. See research/pipeline.py and research/scraper.py.
 
-This subclasses ForecastBot from the official Metaculus bot template
-(https://github.com/Metaculus/metac-bot-template), which handles fetching
-questions, posting forecasts, and aggregating multiple runs. Only the
-research step and the three per-question-type forecast methods are
-overridden here.
+    Metaculus question
+          |
+          v
+    research/pipeline.py
+          |
+          +--> Nemotron 3 Ultra -> search queries
+          |
+          +--> DDGS -> web pages
+          |
+          +--> Nemotron 3 Ultra -> research summary
+          |
+          v
+    Nemotron 3 Ultra -> forecast reasoning
+          |
+          v
+    forecasting_tools.structure_output
+          |
+          +--> Nemotron 3 Ultra
+          |
+          v
+    ForecastBot -> Metaculus
+
+The entire LLM pipeline uses the free OpenRouter model:
+
+    nvidia/nemotron-3-ultra-550b-a55b:free
 """
 
 from __future__ import annotations
@@ -41,65 +51,104 @@ from forecasting_tools import (
     structure_output,
 )
 
-from clients import hf_vibethinker
+from clients.openrouter_helper import generate_forecast_reasoning
 from research.pipeline import run_research_pipeline
 
 logger = logging.getLogger(__name__)
 
 
-class VibeThinkerForecastBot(ForecastBot):
-    """Metaculus forecasting bot whose reasoning brain is VibeThinker-3B."""
+class OpenRouterForecastBot(ForecastBot):
+    """
+    Metaculus forecasting bot powered entirely by Nemotron 3 Ultra
+    through OpenRouter's free tier.
+    """
 
     _structure_output_validation_samples = 2
 
     ##################################### RESEARCH #####################################
 
-    async def run_research(self, question: MetaculusQuestion) -> str:
+    async def run_research(
+        self,
+        question: MetaculusQuestion,
+    ) -> str:
         research = await run_research_pipeline(
             question_text=question.question_text,
             resolution_criteria=question.resolution_criteria or "",
             background=question.background_info or "",
         )
-        logger.info("Research for %s:\n%s", question.page_url, research[:1000])
+
+        logger.info(
+            "Research for %s:\n%s",
+            question.page_url,
+            research[:1000],
+        )
+
         return research
 
     ##################################### BINARY QUESTIONS #####################################
 
     async def _run_forecast_on_binary(
-        self, question: BinaryQuestion, research: str
+        self,
+        question: BinaryQuestion,
+        research: str,
     ) -> ReasonedPrediction[float]:
+
         prompt = clean_indents(
             f"""
-            You are a professional forecaster interviewing for a job.
+            You are a professional probabilistic forecaster.
 
-            Your interview question is:
+            Your task is to forecast the probability of the following
+            binary event.
+
+            QUESTION:
             {question.question_text}
 
-            Question background:
+            QUESTION BACKGROUND:
             {question.background_info}
 
-            This question's outcome will be determined by the specific criteria below. These criteria have not yet been satisfied:
+            RESOLUTION CRITERIA:
             {question.resolution_criteria}
+
+            FINE PRINT:
             {question.fine_print}
 
-            Your research assistant says:
+            RESEARCH:
             {research}
 
-            Today is {datetime.now().strftime("%Y-%m-%d")}.
+            TODAY:
+            {datetime.now().strftime("%Y-%m-%d")}
 
-            Before answering you write:
-            (a) The time left until the outcome to the question is known.
-            (b) The status quo outcome if nothing changed.
-            (c) A brief description of a scenario that results in a No outcome.
-            (d) A brief description of a scenario that results in a Yes outcome.
+            Before giving your final probability, carefully consider:
 
-            You write your rationale remembering that good forecasters put extra weight on the status quo outcome since the world changes slowly most of the time.
+            (a) How much time remains until the outcome is known.
+            (b) The status quo if nothing significant changes.
+            (c) A plausible scenario producing a NO outcome.
+            (d) A plausible scenario producing a YES outcome.
+            (e) Base rates and historical precedent.
+            (f) Important evidence supporting each side.
+            (g) Important uncertainties and unknowns.
 
-            The last thing you write is your final answer as: "Probability: ZZ%", 0-100
+            Good forecasters generally put substantial weight on the
+            status quo because the world often changes more slowly than
+            people expect.
+
+            Do not blindly follow the research. Evaluate its quality.
+
+            The final line MUST be exactly:
+
+            Probability: ZZ%
+
+            where ZZ is your probability from 0 to 100.
             """
         )
-        reasoning = await hf_vibethinker.generate_forecast_reasoning(prompt)
-        logger.info("VibeThinker reasoning for %s: %s", question.page_url, reasoning[:500])
+
+        reasoning = await generate_forecast_reasoning(prompt)
+
+        logger.info(
+            "Nemotron reasoning for %s: %s",
+            question.page_url,
+            reasoning[:1000],
+        )
 
         binary_prediction: BinaryPrediction = await structure_output(
             reasoning,
@@ -107,58 +156,107 @@ class VibeThinkerForecastBot(ForecastBot):
             model=self._parser_llm(),
             num_validation_samples=self._structure_output_validation_samples,
         )
-        decimal_pred = max(0.01, min(0.99, binary_prediction.prediction_in_decimal))
-        return ReasonedPrediction(prediction_value=decimal_pred, reasoning=reasoning)
+
+        decimal_pred = max(
+            0.01,
+            min(
+                0.99,
+                binary_prediction.prediction_in_decimal,
+            ),
+        )
+
+        return ReasonedPrediction(
+            prediction_value=decimal_pred,
+            reasoning=reasoning,
+        )
 
     ##################################### MULTIPLE CHOICE QUESTIONS #####################################
 
     async def _run_forecast_on_multiple_choice(
-        self, question: MultipleChoiceQuestion, research: str
+        self,
+        question: MultipleChoiceQuestion,
+        research: str,
     ) -> ReasonedPrediction[PredictedOptionList]:
+
         prompt = clean_indents(
             f"""
-            You are a professional forecaster interviewing for a job.
+            You are a professional probabilistic forecaster.
 
-            Your interview question is:
+            QUESTION:
             {question.question_text}
 
-            The options are: {question.options}
+            OPTIONS:
+            {question.options}
 
-            Background:
+            BACKGROUND:
             {question.background_info}
+
+            RESOLUTION CRITERIA:
             {question.resolution_criteria}
+
+            FINE PRINT:
             {question.fine_print}
 
-            Your research assistant says:
+            RESEARCH:
             {research}
 
-            Today is {datetime.now().strftime("%Y-%m-%d")}.
+            TODAY:
+            {datetime.now().strftime("%Y-%m-%d")}
 
-            Before answering you write:
-            (a) The time left until the outcome to the question is known.
-            (b) The status quo outcome if nothing changed.
-            (c) A description of a scenario that results in an unexpected outcome.
+            Before producing probabilities, consider:
 
-            You write your rationale remembering that (1) good forecasters put extra weight on the status quo outcome since the world changes slowly most of the time, and (2) good forecasters leave some moderate probability on most options to account for unexpected outcomes.
+            (a) The time remaining.
+            (b) The status quo outcome.
+            (c) The most likely option.
+            (d) Why each alternative could occur.
+            (e) Base rates and historical precedent.
+            (f) Unexpected scenarios.
+            (g) Whether the research contains conflicting evidence.
 
-            The last thing you write is your final probabilities for the N options in this order {question.options} as:
+            Do not assign probability merely because an option sounds
+            plausible. Probabilities should reflect your actual assessment.
+
+            Give a probability to EVERY option.
+
+            The final answer must contain the options in exactly this order:
+
+            {question.options}
+
+            Use:
+
             Option_A: Probability_A
             Option_B: Probability_B
             ...
-            Option_N: Probability_N
+
+            Probabilities should sum to approximately 100%.
             """
         )
-        reasoning = await hf_vibethinker.generate_forecast_reasoning(prompt)
-        logger.info("VibeThinker reasoning for %s: %s", question.page_url, reasoning[:500])
+
+        reasoning = await generate_forecast_reasoning(prompt)
+
+        logger.info(
+            "Nemotron reasoning for %s: %s",
+            question.page_url,
+            reasoning[:1000],
+        )
 
         parsing_instructions = clean_indents(
             f"""
-            Make sure that all option names are one of the following:
+            The valid option names are:
+
             {question.options}
-            The text you are parsing may prepend these options with some variation of "Option" which you should remove if not part of the option names I just gave you.
-            Additionally, you may sometimes need to parse a 0% probability. Please do not skip options with 0% but rather make it an entry in your final list with 0% probability.
+
+            When parsing the answer:
+
+            - Every valid option must appear.
+            - Use exactly the supplied option names.
+            - Remove prefixes such as "Option" if they are not part of
+              the actual option name.
+            - Preserve 0% probabilities.
+            - Do not invent options.
             """
         )
+
         predicted_option_list: PredictedOptionList = await structure_output(
             text_to_structure=reasoning,
             output_type=PredictedOptionList,
@@ -166,78 +264,116 @@ class VibeThinkerForecastBot(ForecastBot):
             num_validation_samples=self._structure_output_validation_samples,
             additional_instructions=parsing_instructions,
         )
-        return ReasonedPrediction(prediction_value=predicted_option_list, reasoning=reasoning)
+
+        return ReasonedPrediction(
+            prediction_value=predicted_option_list,
+            reasoning=reasoning,
+        )
 
     ##################################### NUMERIC QUESTIONS #####################################
 
     async def _run_forecast_on_numeric(
-        self, question: NumericQuestion, research: str
+        self,
+        question: NumericQuestion,
+        research: str,
     ) -> ReasonedPrediction[NumericDistribution]:
-        upper_bound_message, lower_bound_message = self._create_upper_and_lower_bound_messages(
-            question
+
+        upper_bound_message, lower_bound_message = (
+            self._create_upper_and_lower_bound_messages(question)
         )
+
         prompt = clean_indents(
             f"""
-            You are a professional forecaster interviewing for a job.
+            You are a professional probabilistic forecaster.
 
-            Your interview question is:
+            QUESTION:
             {question.question_text}
 
-            Background:
+            BACKGROUND:
             {question.background_info}
+
+            RESOLUTION CRITERIA:
             {question.resolution_criteria}
+
+            FINE PRINT:
             {question.fine_print}
 
-            Units for answer: {question.unit_of_measure if question.unit_of_measure else "Not stated (please infer this)"}
+            UNITS:
+            {question.unit_of_measure if question.unit_of_measure else "Not stated; infer carefully."}
 
-            Your research assistant says:
+            RESEARCH:
             {research}
 
-            Today is {datetime.now().strftime("%Y-%m-%d")}.
+            TODAY:
+            {datetime.now().strftime("%Y-%m-%d")}
+
+            QUESTION LOWER BOUND:
             {lower_bound_message}
+
+            QUESTION UPPER BOUND:
             {upper_bound_message}
 
-            Formatting Instructions:
-            - Please notice the units requested and give your answer in these units.
+            Consider:
+
+            (a) The time remaining.
+            (b) The current value or status quo.
+            (c) Historical base rates.
+            (d) Current trends.
+            (e) Expert and market expectations where available.
+            (f) A plausible low-outcome scenario.
+            (g) A plausible high-outcome scenario.
+            (h) Unknown unknowns.
+
+            Be appropriately uncertain.
+
+            Formatting requirements:
+
+            - Use the requested units.
             - Never use scientific notation.
-            - Always start with a smaller number and then increase from there. The value for percentile 10 should always be less than the value for percentile 20, and so on.
+            - Percentile values must increase monotonically.
+            - Do not invent unsupported precision.
 
-            Before answering you write:
-            (a) The time left until the outcome to the question is known.
-            (b) The outcome if nothing changed.
-            (c) The outcome if the current trend continued.
-            (d) The expectations of experts and markets.
-            (e) A brief description of an unexpected scenario that results in a low outcome.
-            (f) A brief description of an unexpected scenario that results in a high outcome.
+            Your final answer MUST contain exactly:
 
-            You remind yourself that good forecasters are humble and set wide 90/10 confidence intervals to account for unknown unknowns.
-
-            The last thing you write is your final answer as:
-            "
-            Percentile 10: XX (lowest number value)
+            Percentile 10: XX
             Percentile 20: XX
             Percentile 40: XX
             Percentile 60: XX
             Percentile 80: XX
-            Percentile 90: XX (highest number value)
-            "
+            Percentile 90: XX
+
+            where XX is a numerical value in the requested units.
             """
         )
-        reasoning = await hf_vibethinker.generate_forecast_reasoning(prompt)
-        logger.info("VibeThinker reasoning for %s: %s", question.page_url, reasoning[:500])
+
+        reasoning = await generate_forecast_reasoning(prompt)
+
+        logger.info(
+            "Nemotron reasoning for %s: %s",
+            question.page_url,
+            reasoning[:1000],
+        )
 
         parsing_instructions = clean_indents(
             f"""
-            The text given to you is trying to give a forecast distribution for a numeric question.
-            - This text is trying to answer the numeric question: "{question.question_text}".
-            - When parsing the text, please make sure to give the values (the ones assigned to percentiles) in terms of the correct units.
-            - The units for the forecast are: {question.unit_of_measure}
-            - As an example, someone else guessed that the answer will be between {question.lower_bound} {question.unit_of_measure} and {question.upper_bound} {question.unit_of_measure}, so the numbers parsed from an answer like this would be verbatim "{question.lower_bound}" and "{question.upper_bound}".
-            - If the answer doesn't give the answer in the correct units, you should parse it in the right units.
-            - If percentiles are not explicitly given, please don't return a parsed output, but rather indicate that the answer is not explicitly given in the text.
-            - Turn any values that are in scientific notation into regular numbers.
+            The numeric question is:
+
+            {question.question_text}
+
+            Units:
+            {question.unit_of_measure}
+
+            When parsing:
+
+            - Values must be expressed in the correct units.
+            - Convert scientific notation to ordinary numbers.
+            - Only use percentile values explicitly supported by the
+              model's final answer.
+            - Preserve the requested percentile labels.
+            - Do not invent missing percentile values.
             """
         )
+
         percentile_list: list[Percentile] = await structure_output(
             reasoning,
             list[Percentile],
@@ -245,47 +381,67 @@ class VibeThinkerForecastBot(ForecastBot):
             additional_instructions=parsing_instructions,
             num_validation_samples=self._structure_output_validation_samples,
         )
-        prediction = NumericDistribution.from_question(percentile_list, question)
-        return ReasonedPrediction(prediction_value=prediction, reasoning=reasoning)
+
+        prediction = NumericDistribution.from_question(
+            percentile_list,
+            question,
+        )
+
+        return ReasonedPrediction(
+            prediction_value=prediction,
+            reasoning=reasoning,
+        )
+
+    ##################################### HELPERS #####################################
 
     def _create_upper_and_lower_bound_messages(
-        self, question: NumericQuestion
+        self,
+        question: NumericQuestion,
     ) -> tuple[str, str]:
+
         upper_bound_number = (
             question.nominal_upper_bound
             if question.nominal_upper_bound is not None
             else question.upper_bound
         )
+
         lower_bound_number = (
             question.nominal_lower_bound
             if question.nominal_lower_bound is not None
             else question.lower_bound
         )
+
         unit_of_measure = question.unit_of_measure
 
         if question.open_upper_bound:
             upper_bound_message = (
-                f"The question creator thinks the number is likely not higher "
-                f"than {upper_bound_number} {unit_of_measure}."
+                f"The question creator thinks the number is likely "
+                f"not higher than {upper_bound_number} "
+                f"{unit_of_measure}."
             )
         else:
             upper_bound_message = (
-                f"The outcome can not be higher than {upper_bound_number} {unit_of_measure}."
+                f"The outcome cannot be higher than "
+                f"{upper_bound_number} {unit_of_measure}."
             )
+
         if question.open_lower_bound:
             lower_bound_message = (
-                f"The question creator thinks the number is likely not lower "
-                f"than {lower_bound_number} {unit_of_measure}."
+                f"The question creator thinks the number is likely "
+                f"not lower than {lower_bound_number} "
+                f"{unit_of_measure}."
             )
         else:
             lower_bound_message = (
-                f"The outcome can not be lower than {lower_bound_number} {unit_of_measure}."
+                f"The outcome cannot be lower than "
+                f"{lower_bound_number} {unit_of_measure}."
             )
+
         return upper_bound_message, lower_bound_message
 
-    ##################################### HELPERS #####################################
-
     def _parser_llm(self) -> GeneralLlm:
-        """The free OpenRouter model used to parse VibeThinker-3B's free-text
-        reasoning into a structured prediction. Never the main brain."""
+        """
+        Return the same Nemotron model used for all other LLM operations.
+        """
+
         return self.get_llm("parser", "llm")
