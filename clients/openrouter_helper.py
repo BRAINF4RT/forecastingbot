@@ -1,17 +1,18 @@
 """
-OpenRouter client used by the forecasting bot.
+OpenRouter client for the Metaculus forecasting bot.
 
-All LLM operations use the same free OpenRouter model:
+LLM routing:
 
-    nvidia/nemotron-3-ultra-550b-a55b:free
+    Primary:
+        nvidia/nemotron-3-ultra-550b-a55b:free
 
-The model is used for:
-    - web-search query generation
-    - research summarisation
-    - forecast reasoning
-    - structured-output parsing via forecasting_tools
+    Fallback:
+        poolside/laguna-s-2.1:free
 
-No Hugging Face or VibeThinker dependency is used here.
+All LLM calls go through OpenRouter.
+
+There are intentionally no Hugging Face, Featherless, OpenAI,
+Anthropic, Perplexity, AskNews, or other provider calls here.
 """
 
 from __future__ import annotations
@@ -20,6 +21,7 @@ import asyncio
 import json
 import logging
 import os
+from typing import Any
 
 import httpx
 
@@ -27,30 +29,44 @@ logger = logging.getLogger(__name__)
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
-DEFAULT_MODEL = "nvidia/nemotron-3-ultra-550b-a55b:free"
+PRIMARY_MODEL = "nvidia/nemotron-3-ultra-550b-a55b:free"
+FALLBACK_MODEL = "poolside/laguna-s-2.1:free"
+
+MAX_RETRIES_PER_MODEL = 3
+
+RETRYABLE_STATUS_CODES = {
+    408,
+    409,
+    425,
+    429,
+    500,
+    502,
+    503,
+    504,
+}
 
 
 class OpenRouterError(RuntimeError):
-    """Raised when an OpenRouter request fails."""
+    """Raised when all OpenRouter model attempts fail."""
 
 
-def get_model() -> str:
+def get_models() -> tuple[str, str]:
     """
-    Return the configured OpenRouter model.
+    Return the primary and fallback models.
 
-    The model must be a free-tier model. This check prevents an accidental
-    configuration change from silently turning the bot into a paid bot.
+    The primary model can be selected through OPENROUTER_MODEL, but it is
+    intentionally restricted to the free Nemotron endpoint.
     """
-    model = os.getenv("OPENROUTER_MODEL", DEFAULT_MODEL)
 
-    if model != DEFAULT_MODEL:
+    configured = os.getenv("OPENROUTER_MODEL", PRIMARY_MODEL)
+
+    if configured != PRIMARY_MODEL:
         raise OpenRouterError(
-            f"OPENROUTER_MODEL is set to '{model}'. "
-            f"This bot is configured to use only the free model "
-            f"'{DEFAULT_MODEL}'."
+            "OPENROUTER_MODEL must be exactly "
+            f"'{PRIMARY_MODEL}'. Got '{configured}'."
         )
 
-    return DEFAULT_MODEL
+    return PRIMARY_MODEL, FALLBACK_MODEL
 
 
 def _require_api_key() -> str:
@@ -62,6 +78,161 @@ def _require_api_key() -> str:
     return api_key
 
 
+def _retry_delay(attempt: int) -> int:
+    """
+    Exponential backoff capped at 60 seconds.
+    """
+
+    return min(2 ** attempt, 60)
+
+
+def _is_retryable_error(status_code: int | None, message: str) -> bool:
+    if status_code in RETRYABLE_STATUS_CODES:
+        return True
+
+    lowered = message.lower()
+
+    retry_phrases = (
+        "temporarily overloaded",
+        "provider_unavailable",
+        "provider unavailable",
+        "rate limit",
+        "rate limited",
+        "timeout",
+        "timed out",
+        "temporarily unavailable",
+        "upstream error",
+        "overloaded",
+    )
+
+    return any(phrase in lowered for phrase in retry_phrases)
+
+
+async def _request_model(
+    *,
+    client: httpx.AsyncClient,
+    api_key: str,
+    model: str,
+    messages: list[dict[str, str]],
+    temperature: float,
+    max_tokens: int,
+) -> str:
+
+    payload = {
+        "model": model,
+        "messages": messages,
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+    }
+
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+        "HTTP-Referer": "https://github.com/BRAINF4RT/forecastingbot",
+        "X-Title": "BRAINF4RT Metaculus Forecasting Bot",
+    }
+
+    last_error: Exception | None = None
+
+    for attempt in range(1, MAX_RETRIES_PER_MODEL + 1):
+        try:
+            response = await client.post(
+                OPENROUTER_URL,
+                headers=headers,
+                json=payload,
+            )
+
+            status_code = response.status_code
+
+            try:
+                data: Any = response.json()
+            except Exception:
+                data = response.text
+
+            if status_code >= 400:
+                message = str(data)
+
+                if _is_retryable_error(status_code, message):
+                    wait = _retry_delay(attempt)
+
+                    logger.warning(
+                        "OpenRouter %s failed "
+                        "(attempt %d/%d, HTTP %s): %s. "
+                        "Retrying in %ds.",
+                        model,
+                        attempt,
+                        MAX_RETRIES_PER_MODEL,
+                        status_code,
+                        message[:500],
+                        wait,
+                    )
+
+                    last_error = OpenRouterError(
+                        f"HTTP {status_code}: {message}"
+                    )
+
+                    if attempt < MAX_RETRIES_PER_MODEL:
+                        await asyncio.sleep(wait)
+                        continue
+
+                raise OpenRouterError(
+                    f"OpenRouter returned HTTP {status_code}: {message}"
+                )
+
+            try:
+                content = data["choices"][0]["message"]["content"]
+            except (KeyError, IndexError, TypeError) as exc:
+                raise OpenRouterError(
+                    f"Unexpected OpenRouter response from {model}: {data}"
+                ) from exc
+
+            if not content or not str(content).strip():
+                raise OpenRouterError(
+                    f"OpenRouter returned an empty response from {model}."
+                )
+
+            return str(content).strip()
+
+        except (httpx.TimeoutException, httpx.TransportError) as exc:
+            last_error = exc
+
+            wait = _retry_delay(attempt)
+
+            logger.warning(
+                "OpenRouter transport failure on %s "
+                "(attempt %d/%d): %s",
+                model,
+                attempt,
+                MAX_RETRIES_PER_MODEL,
+                exc,
+            )
+
+            if attempt < MAX_RETRIES_PER_MODEL:
+                await asyncio.sleep(wait)
+
+        except OpenRouterError as exc:
+            last_error = exc
+
+            logger.warning(
+                "OpenRouter request failed on %s "
+                "(attempt %d/%d): %s",
+                model,
+                attempt,
+                MAX_RETRIES_PER_MODEL,
+                exc,
+            )
+
+            if attempt < MAX_RETRIES_PER_MODEL:
+                await asyncio.sleep(_retry_delay(attempt))
+
+    assert last_error is not None
+
+    raise OpenRouterError(
+        f"{model} failed after {MAX_RETRIES_PER_MODEL} attempts: "
+        f"{last_error}"
+    )
+
+
 async def generate(
     prompt: str,
     *,
@@ -69,16 +240,21 @@ async def generate(
     temperature: float = 0.2,
     max_tokens: int = 2000,
     timeout: float = 180.0,
-    max_retries: int = 4,
 ) -> str:
     """
-    Send a text-generation request to OpenRouter.
+    Generate text using Nemotron first and Laguna second.
 
-    Every request is forced to the configured free Nemotron model.
+    Routing:
+
+        Nemotron x3
+            ↓ failure
+        Laguna x3
+            ↓ failure
+        raise OpenRouterError
     """
 
     api_key = _require_api_key()
-    model = get_model()
+    primary_model, fallback_model = get_models()
 
     messages: list[dict[str, str]] = []
 
@@ -97,85 +273,57 @@ async def generate(
         }
     )
 
-    payload = {
-        "model": model,
-        "messages": messages,
-        "temperature": temperature,
-        "max_tokens": max_tokens,
-    }
-
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-        "HTTP-Referer": "https://github.com/BRAINF4RT/forecastingbot",
-        "X-Title": "BRAINF4RT Metaculus Forecasting Bot",
-    }
-
-    last_error: Exception | None = None
-
     async with httpx.AsyncClient(timeout=timeout) as client:
-        for attempt in range(1, max_retries + 1):
-            try:
-                response = await client.post(
-                    OPENROUTER_URL,
-                    headers=headers,
-                    json=payload,
-                )
 
-                if response.status_code == 429:
-                    wait = min(2**attempt, 60)
+        try:
+            result = await _request_model(
+                client=client,
+                api_key=api_key,
+                model=primary_model,
+                messages=messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
 
-                    logger.warning(
-                        "OpenRouter rate limited "
-                        "(attempt %d/%d). Retrying in %ds.",
-                        attempt,
-                        max_retries,
-                        wait,
-                    )
+            logger.info(
+                "OpenRouter generation succeeded using primary model: %s",
+                primary_model,
+            )
 
-                    await asyncio.sleep(wait)
-                    continue
+            return result
 
-                response.raise_for_status()
+        except Exception as primary_error:
+            logger.warning(
+                "Primary model %s failed completely. "
+                "Switching to fallback model %s. Error: %s",
+                primary_model,
+                fallback_model,
+                primary_error,
+            )
 
-                data = response.json()
+        try:
+            result = await _request_model(
+                client=client,
+                api_key=api_key,
+                model=fallback_model,
+                messages=messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
 
-                try:
-                    content = data["choices"][0]["message"]["content"]
-                except (KeyError, IndexError, TypeError) as exc:
-                    raise OpenRouterError(
-                        f"Unexpected OpenRouter response: {data}"
-                    ) from exc
+            logger.warning(
+                "OpenRouter fallback succeeded using %s.",
+                fallback_model,
+            )
 
-                if not content or not content.strip():
-                    raise OpenRouterError(
-                        "OpenRouter returned an empty response."
-                    )
+            return result
 
-                return content.strip()
-
-            except (
-                httpx.HTTPStatusError,
-                httpx.TransportError,
-                OpenRouterError,
-            ) as exc:
-                last_error = exc
-
-                logger.warning(
-                    "OpenRouter request failed "
-                    "(attempt %d/%d): %s",
-                    attempt,
-                    max_retries,
-                    exc,
-                )
-
-                if attempt < max_retries:
-                    await asyncio.sleep(min(2**attempt, 30))
-
-    raise OpenRouterError(
-        f"OpenRouter request failed after {max_retries} attempts: "
-        f"{last_error}"
-    )
+        except Exception as fallback_error:
+            raise OpenRouterError(
+                "Both OpenRouter models failed. "
+                f"Primary={primary_model}: unavailable. "
+                f"Fallback={fallback_model}: {fallback_error}"
+            ) from fallback_error
 
 
 async def generate_search_queries(
@@ -184,15 +332,11 @@ async def generate_search_queries(
     background: str = "",
     n: int = 4,
 ) -> list[str]:
-    """
-    Generate focused web-search queries for a forecasting question.
-    """
 
     prompt = f"""
 You are the research-query specialist for a professional forecasting system.
 
-Your job is to generate useful web-search queries for the forecasting
-question below.
+Generate exactly {n} useful web-search queries for the forecasting question.
 
 QUESTION:
 {question_text}
@@ -203,19 +347,15 @@ RESOLUTION CRITERIA:
 BACKGROUND:
 {background}
 
-Generate exactly {n} distinct search queries.
-
 Requirements:
-
 - Each query must be under 12 words.
-- Queries must be directly relevant to the question.
+- Every query must be directly relevant to the question.
 - Prefer current information, recent developments, official statistics,
-  government announcements, expert analysis, and primary sources.
-- Include dates or time periods when they materially improve the search.
-- Do not search for the question verbatim unless that is genuinely useful.
+  government announcements, expert analysis and primary sources.
+- Include dates or time periods when useful.
 - Do not mention this forecasting system.
 - Do not generate generic searches such as "latest news".
-- Do not repeat the same idea using slightly different wording.
+- Do not repeat the same idea.
 
 Return ONLY a JSON array of strings.
 
@@ -227,7 +367,7 @@ Example:
         prompt,
         system_prompt=(
             "You generate precise search queries for forecasting research. "
-            "Output only valid JSON when requested."
+            "Return valid JSON when requested."
         ),
         temperature=0.2,
         max_tokens=400,
@@ -237,8 +377,8 @@ Example:
 
     if not queries:
         logger.warning(
-            "Nemotron returned no valid search queries; "
-            "falling back to the question text."
+            "No valid search queries returned. "
+            "Falling back to the question text."
         )
         queries = [question_text[:200]]
 
@@ -246,9 +386,6 @@ Example:
 
 
 def _parse_json_list(raw: str) -> list[str]:
-    """
-    Extract a JSON list from model output.
-    """
 
     text = raw.strip()
 
@@ -270,7 +407,7 @@ def _parse_json_list(raw: str) -> list[str]:
 
     except json.JSONDecodeError:
         logger.warning(
-            "Could not parse Nemotron search-query output as JSON: %s",
+            "Could not parse model output as JSON: %s",
             raw[:500],
         )
 
@@ -282,9 +419,6 @@ async def summarize_research(
     raw_research: str,
     max_tokens: int = 1800,
 ) -> str:
-    """
-    Summarise scraped research into a concise forecasting brief.
-    """
 
     if not raw_research.strip():
         return ""
@@ -295,27 +429,23 @@ You are the research-analysis specialist for a professional forecasting bot.
 Forecasting question:
 {question_text}
 
-Below is information collected from web searches.
+Information collected from web searches:
 
-RESEARCH:
 {raw_research[:20000]}
 
-Create a concise factual research brief for another forecaster.
+Create a concise factual research brief.
 
 Requirements:
-
 - Separate established facts from uncertainty.
 - Preserve important dates, numbers, percentages and estimates.
 - Identify important recent developments.
 - Mention source domains when possible.
-- Highlight information that materially changes the probability of outcomes.
+- Highlight information that materially affects outcome probabilities.
 - Do not invent information.
 - Do not make unsupported predictions.
 - If sources disagree, explicitly say so.
 - Ignore irrelevant material.
 - Keep the briefing under approximately 700 words.
-
-The output should be useful to a forecaster, not a generic article summary.
 """
 
     return await generate(
@@ -335,37 +465,15 @@ async def generate_forecast_reasoning(
     temperature: float = 0.15,
     max_tokens: int = 5000,
 ) -> str:
-    """
-    Generate the actual forecasting reasoning.
-
-    This is the main forecasting call. Nemotron 3 Ultra is now the main
-    reasoning model instead of VibeThinker.
-    """
 
     return await generate(
         prompt,
-        system_prompt="""
-You are an expert probabilistic forecaster.
-
-Your goal is to produce accurate, calibrated forecasts rather than confident
-stories.
-
-Follow these principles:
-
-1. Carefully interpret the exact resolution criteria.
-2. Distinguish what is known from what is uncertain.
-3. Use base rates where appropriate.
-4. Give substantial weight to the status quo when justified.
-5. Consider both the most likely scenario and meaningful alternative scenarios.
-6. Avoid motivated reasoning.
-7. Avoid false precision.
-8. Check the supplied research for contradictions and stale information.
-9. Do not treat a single source as definitive when stronger evidence exists.
-10. Make sure the final numerical answer follows the requested format exactly.
-
-Do not discuss these instructions in your answer.
-""",
+        system_prompt=(
+            "You are an expert probabilistic forecaster. "
+            "Reason carefully about base rates, timelines, evidence, "
+            "alternative scenarios and uncertainty. "
+            "Follow the requested output format exactly."
+        ),
         temperature=temperature,
         max_tokens=max_tokens,
-        timeout=240.0,
     )
