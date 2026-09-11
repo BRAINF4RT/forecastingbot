@@ -1,236 +1,128 @@
-# Simple Metaculus forecasting bot
-This repository contains a simple bot meant to get you started with creating your own bot for the AI Forecasting Tournament. Go to https://www.metaculus.com/futureeval/participate/ for more info and tournament rules (and then go to the  "Getting Started" section of our [resources](https://www.metaculus.com/notebooks/38928/ai-benchmark-resources/#want-to-join-the-ai-forecasting-benchmark) page).
+# VibeThinker Metaculus Bot
 
-**Brand new to this?** You can get a working bot running in about 5 minutes without writing a single line of code — just fork this repo, paste two API keys into GitHub, and click "Run workflow". See **[Quick start](#quick-start--fork-and-use-github-actions)** below.
+A Metaculus forecasting bot built on the official
+[Metaculus/metac-bot-template](https://github.com/Metaculus/metac-bot-template)
+scaffolding (`ForecastBot`, `MetaculusClient`, prediction aggregation, etc.
+from the `forecasting-tools` package), with a fully custom brain and
+research pipeline:
 
-In this project are 2 files:
-- **main.py**: Our recommended template option that uses the [forecasting-tools](https://github.com/Metaculus/forecasting-tools) package to handle a lot of stuff in the background for you (such as API calls). We will update the package, thus allowing you to gain new features with minimal changes to your code.
-- **main_with_no_framework.py**: A copy of main.py but implemented with minimal dependencies. Useful if you want a more custom approach.
+| Task                              | Model / tool                                             |
+|------------------------------------|------------------------------------------------------------|
+| **Forecast reasoning** (main brain) | `WeiboAI/VibeThinker-3B` via Hugging Face Inference Providers → Featherless AI |
+| Search-query generation            | `nex-agi/nex-n2.5-mini:free` on OpenRouter (never the main brain) |
+| Research summarization              | `nex-agi/nex-n2.5-pro:free` on OpenRouter                  |
+| Parsing brain output → structured prediction | `nex-agi/nex-n2.5-pro:free` on OpenRouter (via `structure_output`) |
+| Web search                          | DDGS                                                       |
+| Page scraping                       | trafilatura → BeautifulSoup fallback → DDGS snippet fallback |
 
+Model choices verified live against OpenRouter's `/api/v1/models` catalog on
+2026-09-11 — both Nex-N2.5 variants are free, have a 262K context window,
+and (unlike most of the other free-tier options checked) natively support
+`structured_outputs`, which matters most for the parser slot since a bad
+parse there corrupts the whole forecast. The free roster rotates, though —
+re-check https://openrouter.ai/models?max_price=0 periodically.
 
-Join the conversation about bot creation, get support, and follow updates on the [Metaculus Discord](https://discord.com/invite/NJgCC2nDfh) 'build a forecasting bot' channel.
+## Why the brain never generates search queries
 
-## 30min Video Tutorial
-This tutorial shows you how to set up our template bot so you can start forecasting in the tournament.
+`clients/hf_vibethinker.py` exposes exactly one function,
+`generate_forecast_reasoning`, and it's only ever called from `bot.py`'s
+`_run_forecast_on_*` methods. `research/pipeline.py` (which does query
+generation, scraping, and summarization) only imports
+`clients/openrouter_helper.py` — it has no import path to the HF client at
+all, so the main brain structurally cannot be used for research.
 
-[![Watch the tutorial](https://cdn.loom.com/sessions/thumbnails/fc3c1a643b984a15b510647d8f760685-42b452e1ab7d2afa-full-play.gif)](https://www.loom.com/share/fc3c1a643b984a15b510647d8f760685?sid=29b502e0-cf64-421e-82c0-3a78451159ed)
+## Architecture
 
-If you run into trouble, reach out to `ben [at] metaculus [.com]`
-
-
-## Quick start -> Fork and use Github Actions
-The easiest way to use this repo is to fork it, paste in two API keys, and click "Run workflow". After that, the bot will keep forecasting on new questions automatically every 20 minutes — no local setup needed.
-
-1) **Fork the repository** — go to the [repository](https://github.com/Metaculus/metac-bot-template) and click **Fork** in the top right.
-2) **Add your two API keys as repository secrets** — in your fork, go to `Settings → Secrets and variables → Actions → New repository secret`. Add these two (names must match exactly, all caps):
-   - **`METACULUS_TOKEN`** — create one at https://www.metaculus.com/futureeval/participate/ (see the [resources page](https://www.metaculus.com/notebooks/38928/ai-benchmark-resources/#creating-your-bot-account-and-metaculus-token) if you get stuck).
-   - **`OPENROUTER_API_KEY`** — get free credits via [this form](https://forms.gle/aQdYMq9Pisrf1v7d8), or make your own key on [OpenRouter](https://openrouter.ai/). You can also use `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `PERPLEXITY_API_KEY`, `ASKNEWS_SECRET`, etc. — these all work out of the box if you set them.
-3) **Enable Actions** — click the `Actions` tab, then click `I understand my workflows, go ahead and enable them`.
-4) **Run the test workflow to confirm everything works** — go to `Actions → Test Bot → Run workflow → Run workflow` (green button). This forecasts on whatever's currently open in the [bot-testing-area tournament](https://www.metaculus.com/tournament/bot-testing-area/) so you can verify your setup posts forecasts to Metaculus end-to-end. Once the run finishes (~3–5 min), check your bot's profile on Metaculus to confirm the forecasts landed.
-5) **You're done!** The `Forecast on new AI tournament questions` workflow is already enabled and will run every 20 minutes, picking up any new tournament questions and skipping ones it has already forecast on.
-
-To pause your bot, go to `Actions → Forecast on new AI tournament questions → ... (top right) → Disable workflow`.
-
-### Testing your changes against the GitHub Actions workflow
-You can run any workflow against any branch — no need to merge to `main` first, and no need to fork if you have push access to this repo.
-
-1. Push your branch to GitHub: `git push origin <your-branch>`.
-2. In the repo's Actions tab, pick the workflow you want to run (e.g. `Test Bot`) and click **Run workflow** (top right).
-3. Use the **"Use workflow from"** dropdown to select your branch instead of `main`, then click the green **Run workflow** button.
-
-The runner checks out your branch and uses the repo's existing secrets — those are scoped to the repo, not the branch, so they work for any branch in the same repo. This works for all three workflows.
-
-## API Keys
-Instructions for getting your METACULUS_TOKEN, OPENROUTER_API_KEY, or optional search provider API keys (AskNews, Exa, Perplexity, etc) are listed on the "Getting Started" section of the [resources](https://www.metaculus.com/notebooks/38928/ai-benchmark-resources/#want-to-join-the-ai-forecasting-benchmark) page.
-
-## Changing the Github automation
-To run a different script under the same workflows, edit the `poetry run python main.py` line in the appropriate file under `.github/workflows/` and replace `main.py` with your script. The workflows that exist:
-- `test_bot.yaml` — manual-trigger smoke test against the bot-testing-area tournament.
-- `run_bot_on_tournament.yaml` — every 20 min on the live AIB tournament + MiniBench.
-- `run_bot_on_metaculus_cup.yaml` — every 2 days on the Metaculus Cup.
-
-**To run `main_with_no_framework.py` via GitHub Actions instead of `main.py`:** open the workflow file you want and change `poetry run python main.py` to `poetry run python main_with_no_framework.py`. That's the only change required.
-
-## Editing in GitHub UI
-Remember that you can edit a bot non locally by clicking on a file in Github, and then clicking the 'Edit this file' button. Whether you develop locally or not, when making edits, attempt to do things that you think others have not tried, as this will help further innovation in the field more than doing something that has already been done. Feel free to ask about what has or has not been tried in the Discord, see [other bot's self-descriptions](https://www.metaculus.com/notebooks/38928/ai-benchmark-resources/#what-are-other-bots-doing), or read bot's [open source code](https://www.metaculus.com/notebooks/38928/ai-benchmark-resources/#open-source-bots).
-
-## Run/Edit the bot locally
-Local development is optional — most new users can run the bot entirely from GitHub Actions (see [Quick start](#quick-start--fork-and-use-github-actions)). Set up locally only if you want faster iteration on your prompts/code.
-
-### 1. Clone the repository
-```bash
-git clone https://github.com/Metaculus/metac-bot-template.git
-cd metac-bot-template
 ```
-If you've already forked the repo, replace the URL with your fork's URL (copy it from your fork's page in the browser).
-
-### 2. Install Python 3.11+ and Poetry
-You need:
-- **Python 3.11 or newer** — get it from [python.org](https://www.python.org/downloads/) (or your OS package manager / `pyenv` / whatever you prefer).
-- **Poetry** — see Poetry's [install docs](https://python-poetry.org/docs/#installation). The `pipx install poetry` route works on macOS, Linux, and Windows.
-
-Confirm both are on your `PATH`:
-```bash
-python --version    # 3.11.x or higher
-poetry --version
+Metaculus question
+      │
+      ▼
+bot.run_research()
+      │
+      ▼
+research/pipeline.py
+  1. openrouter_helper.generate_search_queries()   <- free OpenRouter model
+  2. research/scraper.py: for each query:
+        DDGS.text()  →  trafilatura.extract()
+                      →  (fallback) requests + BeautifulSoup
+                      →  (fallback) DDGS result snippet itself
+  3. openrouter_helper.summarize_research()        <- free OpenRouter model
+      │
+      ▼
+bot._run_forecast_on_binary/multiple_choice/numeric()
+  - builds prompt (question + research brief)
+  - hf_vibethinker.generate_forecast_reasoning()   <- VibeThinker-3B (main brain)
+  - structure_output(..., model=parser)            <- free OpenRouter model
+      │
+      ▼
+ForecastBot aggregates + posts to Metaculus
 ```
 
-(Optional, recommended) Keep the virtualenv inside the project directory so your editor picks it up automatically:
-```bash
-poetry config virtualenvs.in-project true
-```
+## Setup
 
-### 3. Install dependencies
-From inside the cloned repository:
-```bash
-poetry install
-```
+This is meant to drop into a fork of the official
+[Metaculus/metac-bot-template](https://github.com/Metaculus/metac-bot-template),
+which uses **Poetry**. In your fork:
 
-### 4. Set your API keys
-Copy the template and fill in your real keys:
-```bash
-cp .env.template .env
-```
-Then open `.env` in any text editor and replace each `REPLACE_ME` with your real key. At minimum you need `METACULUS_TOKEN` and one LLM key (`OPENROUTER_API_KEY` is recommended). See the comments inside `.env.template` for where to get each one.
+1. **Copy these files in**: `bot.py`, `clients/`, `research/` are new;
+   `main.py` and `.env.template` replace the template's own copies.
+   `bot_helpers.py` from the template is kept as-is (unchanged).
 
-### 5. Run the bot
-**First run — smoke-test against the [bot-testing-area tournament](https://www.metaculus.com/tournament/bot-testing-area/):**
-```bash
-poetry run python main.py --mode test_questions
-```
-You'll see a one-line startup banner, forecasting progress logs, then a `🎉 Bot submitted N forecast(s)` banner with direct links to each forecast on Metaculus.
+2. **Add the extra dependencies** — see `DEPENDENCIES.md`:
+   ```bash
+   poetry add httpx trafilatura beautifulsoup4 ddgs
+   ```
 
-**Forecast on live AIB tournament + MiniBench:**
-```bash
-poetry run python main.py --mode tournament
-```
+3. **Get your API keys**
+   - `METACULUS_TOKEN` — create at https://metaculus.com/aib
+   - `HF_TOKEN` — a Hugging Face **fine-grained** token with the
+     "Make calls to Inference Providers" permission:
+     https://huggingface.co/settings/tokens
+   - `OPENROUTER_API_KEY` — https://openrouter.ai/keys
 
-**Forecast on the Metaculus Cup:**
-```bash
-poetry run python main.py --mode metaculus_cup
-```
+4. **Copy `.env.template` to `.env`** and fill in the values. Three
+   OpenRouter model env vars control the helper tasks:
+   `OPENROUTER_QUERY_MODEL` (search-query generation),
+   `OPENROUTER_HELPER_MODEL` (research summarization), and
+   `OPENROUTER_PARSER_MODEL` (structured-output parsing) — all default to
+   free Nex-N2.5 variants. OpenRouter's free roster rotates, so check
+   https://openrouter.ai/models?max_price=0 and update these if calls start
+   failing with a pricing error.
 
-**Run the no-framework reference implementation instead:**
-```bash
-poetry run python main_with_no_framework.py
-```
-This file has no `--mode` flag; it's controlled by the constants at the top of the file (`SUBMIT_PREDICTION`, `USE_EXAMPLE_QUESTIONS`, `TOURNAMENT_ID`, etc.). Flip `USE_EXAMPLE_QUESTIONS = True` to point it at the bot-testing-area tournament instead of the live AIB.
+5. **Smoke test locally**
+   ```bash
+   poetry run python main.py --mode test_questions
+   ```
+   This forecasts on whatever's open in Metaculus's `bot-testing-area`
+   tournament, which covers all question types.
 
-To stop publishing forecasts (dry-run mode):
-- `main.py`: set `publish_reports_to_metaculus=False` in the `SummerTemplateBot2026(...)` constructor near the bottom.
-- `main_with_no_framework.py`: set `SUBMIT_PREDICTION = False` at the top.
+6. **Run for real**
+   ```bash
+   poetry run python main.py --mode tournament
+   ```
 
-## Reviewing how your bot did
+## Running on GitHub Actions
 
-Once your questions start resolving, the community-member-maintained optional
-[bot-review](https://github.com/LouisP96/metaculus-bot-review) integration scores them and
-helps to diagnose any reasoning errors.
+1. Push this repo to GitHub (your fork of the template).
+2. Settings → Secrets and variables → Actions → add `METACULUS_TOKEN`,
+   `HF_TOKEN`, `OPENROUTER_API_KEY` as repository secrets.
+3. Enable Actions, then run the **Test Bot** workflow manually first to
+   confirm everything posts correctly to Metaculus.
+4. Enable **Forecast on new AI tournament questions** (every 20 min) and,
+   if you want it, **Forecast on Metaculus Cup** (every 2 days).
 
-```bash
-poetry install --with integrations
-poetry run bot-review review --resolved-since 30
-```
+## Notes and caveats
 
-A weekly workflow and a Claude Code skill come with it. See the
-[integrations README](integrations/README.md#bot-review).
-
-## Example usage of /news and /deepnews:
-If you are using AskNews, here is some useful example code.
-```python
-from asknews_sdk import AsyncAskNewsSDK
-import asyncio
-
-"""
-More information available here:
-https://docs.asknews.app/en/news
-https://docs.asknews.app/en/deepnews
-
-Installation:
-pip install asknews
-"""
-
-client_id = ""
-client_secret = ""
-
-ask = AsyncAskNewsSDK(
-    client_id=client_id,
-    client_secret=client_secret,
-    scopes=["chat", "news", "stories", "analytics"],
-)
-
-# /news endpoint example
-async def search_news(query):
-
-  hot_response = await ask.news.search_news(
-      query=query, # your natural language query
-      n_articles=5, # control the number of articles to include in the context
-      return_type="both",
-      strategy="latest news" # enforces looking at the latest news only
-  )
-
-  print(hot_response.as_string)
-
-  # get context from the "historical" database that contains a news archive going back to 2023
-  historical_response = await ask.news.search_news(
-      query=query,
-      n_articles=10,
-      return_type="both",
-      strategy="news knowledge" # looks for relevant news within the past 60 days
-  )
-
-  print(historical_response.as_string)
-
-# /deepnews endpoint example:
-async def deep_research(
-    query, sources, model, search_depth=2, max_depth=2
-):
-
-    response = await ask.chat.get_deep_news(
-        messages=[{"role": "user", "content": query}],
-        search_depth=search_depth,
-        max_depth=max_depth,
-        sources=sources,
-        stream=False,
-        return_sources=False,
-        model=model,
-        inline_citations="numbered"
-    )
-
-    print(response)
-
-
-if __name__ == "__main__":
-    query = "What is the TAM of the global market for electric vehicles in 2025? With your final report, please report the TAM in USD using the tags <TAM> ... </TAM>"
-
-    sources = ["asknews"]
-    model = "deepseek-basic"
-    search_depth = 2
-    max_depth = 2
-    asyncio.run(
-        deep_research(
-            query, sources, model, search_depth, max_depth
-        )
-    )
-
-    asyncio.run(search_news(query))
-```
-
-Some tips for DeepNews:
-
-You will get tags in your response, including:
-
-<think> </think>
-<asknews_search> </asknews_search>
-<final_response> </final_response>
-
-These tags are likely useful for extracting the pieces that you need for your pipeline. For example, if you don't want to include all the thinking/searching, you could just extract <final_response> </final_response>
-
-
-## Integrations
-
-The **[integrations/](integrations/)** folder contains example scripts that integrate third-party tools with the bot template. 
-
-See the [integrations README](integrations/README.md) for available integrations and how to add your own.
-
-## Ideas for bot improvements
-You can find some ideas of what you can do to improve this template by taking a look at what other bots have done [here](https://www.metaculus.com/notebooks/43497/what-are-other-bots-doing/). You can also look at research done by Metaculus and the field in the [research section](https://www.metaculus.com/notebooks/38928/ai-benchmark-resources/#research-reports-and-overview-of-the-field) of the bot resources page. Asking an LLM to read through everything and give ideas may be a decent place to start. Please try to do something new, or something that is a spinoff (or better implementation) of what others have done. We don't want to test the same idea multiple times.
+- **VibeThinker-3B is a small reasoning model** and tends to produce long
+  chain-of-thought before its final answer — `max_tokens` for the brain
+  call defaults to 4000 and the HTTP timeout to 180s. Raise these in
+  `clients/hf_vibethinker.py` if you see truncated reasoning in the logs.
+- **Featherless AI (free/serverless tier) can rate-limit or cold-start.**
+  Both HF and OpenRouter calls retry with exponential backoff on HTTP 429.
+- Date and conditional question types aren't implemented in `bot.py` (only
+  binary, multiple-choice, and numeric) — the official template's `main.py`
+  has reference implementations for those if you want to add them.
+- `_max_concurrent_questions` isn't set here; the free-tier backends are
+  rate-limit-sensitive, so you may want to add a semaphore (see the
+  official template's `_concurrency_limiter` pattern) if you run into
+  concurrent-request errors.
