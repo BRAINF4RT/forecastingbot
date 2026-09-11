@@ -702,11 +702,12 @@ def _deterministic_query_fallback(
 
     return _clean_queries(candidates, n)
 
-
 async def summarize_research(
     question_text: str,
+    resolution_criteria: str,
+    background: str,
     raw_research: str,
-    max_tokens: int = 1800,
+    max_tokens: int = 32000,
 ) -> str:
     """
     Summarise scraped research into a concise forecasting brief.
@@ -720,8 +721,14 @@ async def summarize_research(
     prompt = f"""
 You are the research-analysis specialist for a professional forecasting bot.
 
-Forecasting question:
+FORECASTING QUESTION:
 {question_text}
+
+RESOLUTION CRITERIA (this defines exactly what counts as relevant):
+{resolution_criteria}
+
+BACKGROUND:
+{background}
 
 Below is information collected from web searches.
 
@@ -731,24 +738,40 @@ RESEARCH:
 Create a concise factual research brief for another forecaster.
 
 Requirements:
+- Judge relevance strictly against the RESOLUTION CRITERIA above, not the
+  general topic. A source can be about the right subject and still be
+  irrelevant if it doesn't bear on how THIS question resolves.
+- Discard anything that doesn't help determine the specific outcome this
+  question asks about -- generic background the forecaster already has,
+  off-topic search hits, and duplicate information should all be dropped
+  rather than summarized.
 - Separate established facts from uncertainty.
-- Preserve important dates, numbers, percentages and estimates.
-- Identify important recent developments.
+- Preserve important dates, numbers, percentages and estimates -- but only
+  ones tied to this question's resolution.
+- Identify important recent developments relevant to resolution.
 - Mention source domains when possible.
 - Highlight information that materially changes the probability of outcomes.
 - Do not invent information.
 - Do not make unsupported predictions.
 - If sources disagree, explicitly say so.
-- Ignore irrelevant material.
+- If most of the scraped content turns out to be irrelevant once checked
+  against the resolution criteria, say so plainly and keep the briefing
+  short rather than padding it out with off-topic material.
 - Keep the briefing under approximately 700 words.
-- The output should be useful to a forecaster, not a generic article summary.
+- The output should be useful to a forecaster resolving THIS question, not
+  a generic article summary of the topic.
 """
 
     return await generate(
         prompt,
         system_prompt=(
-            "You are an evidence-focused research analyst. "
-            "Never invent facts that are not present in the supplied material."
+            "You are an evidence-focused research analyst working for a "
+            "forecasting bot. You will always be given a specific question "
+            "and its resolution criteria. Your only job is to extract "
+            "information relevant to how that exact question resolves -- "
+            "aggressively filter out material that is merely on-topic but "
+            "doesn't bear on the resolution criteria. Never invent facts "
+            "that are not present in the supplied material."
         ),
         temperature=0.15,
         max_tokens=max_tokens,
@@ -761,7 +784,7 @@ async def generate_forecast_reasoning(
     prompt: str,
     *,
     temperature: float = 0.15,
-    max_tokens: int = 5000,
+    max_tokens: int = 10000,
 ) -> str:
     """
     Generate the actual forecasting reasoning.
