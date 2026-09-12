@@ -2,7 +2,6 @@
 OpenRouter Metaculus Forecast Bot.
 
 LLM architecture:
-
     Search query generation
         |
         +--> Google Gemma 4 31B IT :free
@@ -62,7 +61,6 @@ from forecasting_tools import (
     clean_indents,
     structure_output,
 )
-
 from clients.openrouter_helper import (
     FALLBACK_MODEL,
     PRIMARY_MODEL,
@@ -201,8 +199,7 @@ class OpenRouterForecastBot(ForecastBot):
     Metaculus forecasting bot.
 
     Every forecasting_tools LLM purpose is explicitly configured so that
-    ForecastBot never silently falls back to its own defaults (e.g.
-    GPT-4o / GPT-4o-mini / search-preview) for an unconfigured purpose.
+    ForecastBot never silently falls back to its own defaults.
     """
 
     _structure_output_validation_samples = 2
@@ -239,7 +236,9 @@ class OpenRouterForecastBot(ForecastBot):
             ),
         }
 
-    ##################################### RESEARCH #####################################
+    # -----------------------------------------------------------------------
+    # RESEARCH
+    # -----------------------------------------------------------------------
 
     async def run_research(
         self,
@@ -264,7 +263,9 @@ class OpenRouterForecastBot(ForecastBot):
 
         return research
 
-    ##################################### BINARY #####################################
+    # -----------------------------------------------------------------------
+    # BINARY
+    # -----------------------------------------------------------------------
 
     async def _run_forecast_on_binary(
         self,
@@ -348,7 +349,9 @@ class OpenRouterForecastBot(ForecastBot):
             reasoning=reasoning,
         )
 
-    ##################################### MULTIPLE CHOICE #####################################
+    # -----------------------------------------------------------------------
+    # MULTIPLE CHOICE
+    # -----------------------------------------------------------------------
 
     async def _run_forecast_on_multiple_choice(
         self,
@@ -426,7 +429,6 @@ class OpenRouterForecastBot(ForecastBot):
             {question.options}
 
             When parsing the answer:
-
             - Every valid option must appear.
             - Use exactly the supplied option names.
             - Remove prefixes such as "Option" if they are not part of
@@ -449,7 +451,9 @@ class OpenRouterForecastBot(ForecastBot):
             reasoning=reasoning,
         )
 
-    ##################################### NUMERIC #####################################
+    # -----------------------------------------------------------------------
+    # NUMERIC
+    # -----------------------------------------------------------------------
 
     async def _run_forecast_on_numeric(
         self,
@@ -541,7 +545,6 @@ class OpenRouterForecastBot(ForecastBot):
             {question.unit_of_measure}
 
             When parsing:
-
             - Values must be expressed in the correct units.
             - Convert scientific notation to ordinary numbers.
             - Only use percentile values explicitly supported by the
@@ -569,7 +572,9 @@ class OpenRouterForecastBot(ForecastBot):
             reasoning=reasoning,
         )
 
-    ##################################### DATE #####################################
+    # -----------------------------------------------------------------------
+    # DATE
+    # -----------------------------------------------------------------------
 
     async def _run_forecast_on_date(
         self,
@@ -623,8 +628,8 @@ class OpenRouterForecastBot(ForecastBot):
 
             Formatting requirements:
             - Dates must be in ISO format: YYYY-MM-DD.
-            - Percentile dates must increase monotonically (P10 earliest,
-              P90 latest).
+            - Percentile dates must increase monotonically
+              (P10 earliest, P90 latest).
             - Do not invent unsupported precision.
 
             Your final answer MUST contain exactly:
@@ -653,7 +658,6 @@ class OpenRouterForecastBot(ForecastBot):
             {question.question_text}
 
             When parsing:
-
             - Parse each percentile value as an ISO date (YYYY-MM-DD).
             - If the target schema requires a numeric value, convert the
               parsed date to a Unix timestamp (seconds since epoch, UTC).
@@ -682,26 +686,52 @@ class OpenRouterForecastBot(ForecastBot):
             reasoning=reasoning,
         )
 
-    ##################################### HELPERS #####################################
+    # -----------------------------------------------------------------------
+    # HELPERS
+    # -----------------------------------------------------------------------
 
     def _create_upper_and_lower_bound_messages(
         self,
         question: NumericQuestion | DateQuestion,
     ) -> tuple[str, str]:
+        """
+        Create human-readable bound messages for numeric and date questions.
 
-        upper_bound_number = (
-            question.nominal_upper_bound
-            if question.nominal_upper_bound is not None
-            else question.upper_bound
-        )
+        NumericQuestion has nominal_upper_bound / nominal_lower_bound.
 
-        lower_bound_number = (
-            question.nominal_lower_bound
-            if question.nominal_lower_bound is not None
-            else question.lower_bound
-        )
+        DateQuestion does NOT have those attributes, so its actual
+        upper_bound / lower_bound fields are used directly.
+        """
 
-        unit_of_measure = getattr(question, "unit_of_measure", None) or "date"
+        if isinstance(question, NumericQuestion):
+            upper_bound_number = (
+                question.nominal_upper_bound
+                if question.nominal_upper_bound is not None
+                else question.upper_bound
+            )
+
+            lower_bound_number = (
+                question.nominal_lower_bound
+                if question.nominal_lower_bound is not None
+                else question.lower_bound
+            )
+
+            unit_of_measure = (
+                question.unit_of_measure
+                if question.unit_of_measure
+                else "units"
+            )
+
+        elif isinstance(question, DateQuestion):
+            upper_bound_number = question.upper_bound
+            lower_bound_number = question.lower_bound
+            unit_of_measure = "date"
+
+        else:
+            raise TypeError(
+                "Unsupported question type for bound messages: "
+                f"{type(question).__name__}"
+            )
 
         if question.open_upper_bound:
             upper_bound_message = (
@@ -735,9 +765,9 @@ class OpenRouterForecastBot(ForecastBot):
 
         The parser itself uses:
             Nex-N2.5-Pro -> Nex-N2.5-Mini
-        (native structured-output support; deliberately not the
-        Nemotron/Laguna pair used for research and reasoning -- see the
-        module docstring for why).
+
+        Native structured-output support is deliberately used here rather
+        than the Nemotron/Laguna pair used for research and reasoning.
         """
 
         return self.get_llm("parser", "llm")
