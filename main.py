@@ -47,10 +47,23 @@ from bot import (  # noqa: E402
 )
 from clients.openrouter_helper import QUERY_MODEL  # noqa: E402
 
-
 dotenv.load_dotenv()
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Tournament configuration
+# ---------------------------------------------------------------------------
+
+# Explicitly target the Fall 2026 FutureEval tournament instead of relying
+# on forecasting_tools.CURRENT_AI_COMPETITION_ID to rotate automatically.
+FALL_FUTUREEVAL_2026_ID = "fall-futureeval-2026"
+
+FALL_FUTUREEVAL_2026_URL = (
+    "https://www.metaculus.com/tournament/"
+    "fall-futureeval-2026/"
+)
 
 
 # These are intentionally hard-coded so an environment variable cannot
@@ -80,11 +93,9 @@ def validate_openrouter_configuration() -> None:
             "OPENROUTER_API_KEY is not set."
         )
 
-    configured_primary = (
-        os.getenv(
-            "OPENROUTER_MODEL",
-            EXPECTED_PRIMARY_MODEL,
-        )
+    configured_primary = os.getenv(
+        "OPENROUTER_MODEL",
+        EXPECTED_PRIMARY_MODEL,
     )
 
     if configured_primary != EXPECTED_PRIMARY_MODEL:
@@ -185,9 +196,14 @@ def run_forecasting(
 
     if run_mode == "tournament":
 
+        logger.info(
+            "Targeting Fall 2026 FutureEval tournament: %s",
+            FALL_FUTUREEVAL_2026_ID,
+        )
+
         seasonal_reports = asyncio.run(
             bot.forecast_on_tournament(
-                client.CURRENT_AI_COMPETITION_ID,
+                FALL_FUTUREEVAL_2026_ID,
                 return_exceptions=True,
             )
         )
@@ -213,6 +229,7 @@ def run_forecasting(
         )
 
     # test_questions
+
     bot.skip_previously_forecasted_questions = False
 
     return asyncio.run(
@@ -224,6 +241,7 @@ def run_forecasting(
 
 
 def main() -> None:
+
     logging.basicConfig(
         level=logging.INFO,
         format=(
@@ -282,34 +300,48 @@ def main() -> None:
     logger.info(
         "=" * 60
     )
+
     logger.info(
         "OpenRouter-only forecasting configuration"
     )
+
     logger.info(
         "Primary:  %s",
         PRIMARY_LLM,
     )
+
     logger.info(
         "Fallback: %s",
         FALLBACK_LLM,
     )
+
     logger.info(
         "Queries:  openrouter/%s",
         QUERY_MODEL,
     )
+
     logger.info(
         "Gemma query reasoning: OFF"
     )
+
     logger.info(
         "Direct OpenRouter concurrency limit: 2"
     )
+
     logger.info(
         "Forecasting-tools LLM concurrency limit: 2"
     )
+
     logger.info(
         "No VibeThinker/HuggingFace/Featherless/OpenAI "
         "LLM route is enabled."
     )
+
+    logger.info(
+        "FutureEval tournament: %s",
+        FALL_FUTUREEVAL_2026_ID,
+    )
+
     logger.info(
         "=" * 60
     )
@@ -324,13 +356,10 @@ def main() -> None:
     bot = create_bot()
 
     tournament_urls = {
-        "tournament": (
-            "https://www.metaculus.com/tournament/"
-            "summer-futureeval-2026/"
-        ),
+        "tournament": FALL_FUTUREEVAL_2026_URL,
         "metaculus_cup": (
             "https://www.metaculus.com/tournament/"
-            "metaculus-cup-summer-2025/"
+            "metaculus-cup-fall-2026/"
         ),
         "test_questions": (
             "https://www.metaculus.com/tournament/"
