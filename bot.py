@@ -45,9 +45,9 @@ THIRD_LLM = f"openrouter/{THIRD_MODEL}"
 
 # Dedicated parser models. These are explicitly provider-qualified because
 # forecasting_tools uses LiteLLM for structured-output parsing.
-PARSER_PRIMARY_LLM = "openrouter/nvidia/nemotron-3-super-120b-a12b:free"
+PARSER_PRIMARY_LLM = "openrouter/poolside/laguna-xs-2.1:free"
 PARSER_FALLBACK_LLM = "openrouter/nvidia/nemotron-3.5-lightning:free"
-PARSER_THIRD_LLM = "openrouter/poolside/laguna-xs-2.1:free"
+PARSER_THIRD_LLM = "qwen/qwen3.8-27b:free"
 
 # Maximum number of forecasting-tools / LiteLLM calls allowed at once.
 #
