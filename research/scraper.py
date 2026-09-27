@@ -1,10 +1,12 @@
 """Web search and scraping helpers."""
 from __future__ import annotations
+
 import logging
 import time
 from dataclasses import dataclass
 from typing import Iterable
 from urllib.parse import urlparse
+
 import requests
 import trafilatura
 from bs4 import BeautifulSoup
@@ -68,7 +70,6 @@ def ddgs_search(query: str, max_results: int = 5) -> list[dict]:
 
     results_out: list[dict] = []
     seen_urls: set[str] = set()
-
     for backend in SEARCH_BACKENDS:
         try:
             with DDGS() as ddgs:
@@ -94,7 +95,6 @@ def ddgs_search(query: str, max_results: int = 5) -> list[dict]:
         except Exception as exc:
             logger.warning("[SEARCH] backend=%s failed for %r: %s", backend, query, exc)
         time.sleep(SEARCH_DELAY_SECONDS)
-
     return results_out[:max_results]
 
 
@@ -127,11 +127,9 @@ def scrape_with_bs4(url: str) -> str | None:
         content_type = response.headers.get("content-type", "").lower()
         if "text/html" not in content_type and "application/xhtml" not in content_type:
             return None
-
         soup = BeautifulSoup(response.text, "html.parser")
         for tag in soup(["script", "style", "nav", "footer", "header", "noscript", "svg", "form"]):
             tag.decompose()
-
         paragraphs = [
             p.get_text(" ", strip=True)
             for p in soup.find_all("p")
@@ -162,7 +160,6 @@ def scrape_with_ddgs_snippet(
     searches = [f'"{url}"']
     if title.strip():
         searches.append(f'"{title.strip()}"')
-
     for query in searches:
         try:
             with DDGS() as ddgs:
@@ -173,7 +170,6 @@ def scrape_with_ddgs_snippet(
                     max_results=8,
                     backend="auto",
                 ))
-
             for result in results:
                 result_url = _normalise_url(
                     result.get("href") or result.get("url") or ""
@@ -185,7 +181,6 @@ def scrape_with_ddgs_snippet(
                     return body
         except Exception as exc:
             logger.debug("[SCRAPE] DDGS snippet fallback failed for %s: %s", url, exc)
-
     # The original DDGS result snippet is still a valid final source of text.
     return original_snippet.strip() if len(original_snippet.strip()) >= 40 else None
 
@@ -197,11 +192,9 @@ def scrape_url(url: str, title: str = "", snippet: str = "") -> tuple[str, str]:
     text = scrape_with_trafilatura(url)
     if text:
         return text, "trafilatura"
-
     text = scrape_with_bs4(url)
     if text:
         return text, "bs4"
-
     text = scrape_with_ddgs_snippet(
         url, title=title, original_snippet=snippet
     )
@@ -218,7 +211,6 @@ def gather_sources(
     sources: list[ScrapedSource] = []
     seen_urls: set[str] = set()
     queries = [q.strip() for q in queries if isinstance(q, str) and q.strip()]
-
     for query_index, query in enumerate(queries, start=1):
         logger.info(
             "[RESEARCH] Query %d/%d: %s",
@@ -230,7 +222,6 @@ def gather_sources(
             url = _normalise_url(result.get("href") or result.get("url") or "")
             if is_blocked_url(url) or not url or url in seen_urls:
                 continue
-
             seen_urls.add(url)
             title = (result.get("title") or url).strip()
             snippet = (result.get("body") or "").strip()
@@ -241,7 +232,6 @@ def gather_sources(
             )
             if not content:
                 continue
-
             sources.append(ScrapedSource(
                 query=query,
                 title=title,
@@ -255,7 +245,6 @@ def gather_sources(
                 "[SOURCE] accepted backend=%s method=%s url=%s",
                 backend, method, url,
             )
-
     logger.info(
         "[RESEARCH] Source gathering complete: %d usable sources",
         len(sources),
@@ -266,7 +255,6 @@ def gather_sources(
 def format_sources_as_markdown(sources: list[ScrapedSource]) -> str:
     if not sources:
         return "NO_RESEARCH_AVAILABLE"
-
     return "\n---\n".join(
         f"### {source.title or source.url}\n"
         f"Source: {source.url}\n"
@@ -274,3 +262,39 @@ def format_sources_as_markdown(sources: list[ScrapedSource]) -> str:
         f"{source.content}\n"
         for source in sources
     )
+
+
+def web_search(
+    query: str,
+    max_results: int = 4,
+    scrape: bool = True,
+) -> str:
+    """Run one blocking web search and return its scraped source text."""
+    query = query.strip()
+    if not query:
+        return ""
+
+    if scrape:
+        sources = gather_sources(
+            [query],
+            results_per_query=max_results,
+        )
+        return format_sources_as_markdown(sources)
+
+    results = ddgs_search(query, max_results=max_results)
+    sources = [
+        ScrapedSource(
+            query=query,
+            title=(result.get("title") or result.get("href") or "").strip(),
+            url=_normalise_url(result.get("href") or result.get("url") or ""),
+            snippet=(result.get("body") or "").strip(),
+            content=(result.get("body") or "").strip(),
+            method="ddgs_snippet",
+            backend=result.get("_backend") or "unknown",
+        )
+        for result in results
+        if not is_blocked_url(
+            _normalise_url(result.get("href") or result.get("url") or "")
+        )
+    ]
+    return format_sources_as_markdown(sources)
