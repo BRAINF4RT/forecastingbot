@@ -40,9 +40,10 @@ OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 PRIMARY_MODEL = "nvidia/nemotron-3-ultra-550b-a55b:free"
 FALLBACK_MODEL = "poolside/laguna-s-2.1:free"
+THIRD_MODEL = "openrouter/free"
 
-# Dedicated NON-CoT query-generation model.
-QUERY_MODEL = "google/gemma-4-31b-it:free"
+# Query generation uses OpenRouter's free-model router with reasoning disabled.
+QUERY_MODEL = "openrouter/free"
 
 # Shared semaphore for all direct OpenRouter calls.
 #
@@ -338,62 +339,31 @@ async def generate(
     timeout: float = 180.0,
     max_retries: int = 3,
 ) -> str:
-    """
-    Generate using Nemotron first and automatically fall back to Laguna.
+    """Generate using Nemotron -> Laguna -> OpenRouter free-router."""
+    errors: list[tuple[str, Exception]] = []
 
-    This function is used for:
-        - research summarisation
-        - forecast reasoning
-    """
-
-    try:
-        return await _generate_with_model(
-            prompt,
-            model=PRIMARY_MODEL,
-            system_prompt=system_prompt,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            timeout=timeout,
-            max_retries=max_retries,
-        )
-
-    except Exception as primary_error:
-        logger.warning(
-            "Primary model %s failed after %d attempts. "
-            "Switching to fallback model %s. Error: %s",
-            PRIMARY_MODEL,
-            max_retries,
-            FALLBACK_MODEL,
-            primary_error,
-        )
-
+    for model in (PRIMARY_MODEL, FALLBACK_MODEL, THIRD_MODEL):
         try:
             result = await _generate_with_model(
                 prompt,
-                model=FALLBACK_MODEL,
+                model=model,
                 system_prompt=system_prompt,
                 temperature=temperature,
                 max_tokens=max_tokens,
                 timeout=timeout,
                 max_retries=max_retries,
             )
-
-            logger.info(
-                "Fallback model %s successfully completed the request.",
-                FALLBACK_MODEL,
+            logger.info("OpenRouter model %s successfully completed the request.", model)
+            return result
+        except Exception as exc:
+            errors.append((model, exc))
+            logger.warning(
+                "OpenRouter model %s failed after %d attempts: %s",
+                model, max_retries, exc,
             )
 
-            return result
-
-        except Exception as fallback_error:
-            # Do NOT reference the exception variable from the except block
-            # later without storing it. Python clears exception variables after
-            # an except block.
-            raise OpenRouterError(
-                "Both OpenRouter models failed.\n"
-                f"Primary ({PRIMARY_MODEL}): {primary_error!r}\n"
-                f"Fallback ({FALLBACK_MODEL}): {fallback_error!r}"
-            ) from fallback_error
+    details = "\n".join(f"{model}: {error!r}" for model, error in errors)
+    raise OpenRouterError("All OpenRouter reasoning models failed.\n" + details) from errors[-1][1]
 
 
 async def _generate_search_query_model(
@@ -402,10 +372,9 @@ async def _generate_search_query_model(
     max_tokens: int = 400,
 ) -> str:
     """
-    Generate search queries using Gemma 4 31B with reasoning explicitly OFF.
+    Generate search queries using OpenRouter/free with reasoning explicitly OFF.
 
-    There is intentionally NO Nemotron fallback here because query generation
-    is supposed to be a non-CoT task.
+    Query generation remains separate from the main reasoning chain.
 
     If Gemma fails completely, generate_search_queries() uses deterministic
     fallback queries instead.
@@ -437,7 +406,7 @@ async def generate_search_queries(
     """
     Generate focused web-search queries.
 
-    Gemma 4 31B is used specifically for this job with reasoning disabled.
+    OpenRouter/free is used specifically for this job with reasoning disabled.
 
     The parser intentionally accepts multiple output formats because a free
     model may occasionally ignore formatting instructions.
@@ -482,7 +451,7 @@ Example output:
         raw = await _generate_search_query_model(prompt)
     except Exception as exc:
         logger.warning(
-            "Gemma query generation failed: %s. "
+            "OpenRouter/free query generation failed: %s. "
             "Using deterministic search-query fallback.",
             exc,
         )
@@ -497,13 +466,13 @@ Example output:
 
     if queries:
         logger.info(
-            "Gemma generated search queries: %s",
+            "OpenRouter/free generated search queries: %s",
             queries,
         )
         return queries
 
     logger.warning(
-        "Gemma returned unusable search-query output: %s. "
+        "OpenRouter/free returned unusable search-query output: %s. "
         "Using deterministic fallback queries.",
         raw[:1000],
     )
