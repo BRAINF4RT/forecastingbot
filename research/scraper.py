@@ -1,50 +1,22 @@
-"""
-Web search and scraping helpers.
-
-Metaculus pages are explicitly blocked from being accessed by the scraper.
-"""
-
+"""Web search and scraping helpers."""
 from __future__ import annotations
-
 import logging
 import time
 from dataclasses import dataclass
 from typing import Iterable
 from urllib.parse import urlparse
-
 import requests
 import trafilatura
 from bs4 import BeautifulSoup
 from ddgs import DDGS
 
 logger = logging.getLogger(__name__)
-
-USER_AGENT = (
-    "Mozilla/5.0 (X11; Linux x86_64) "
-    "AppleWebKit/537.36 "
-    "(KHTML, like Gecko) "
-    "Chrome/131.0 Safari/537.36"
-)
-
+USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/131.0 Safari/537.36"
 MAX_CHARS_PER_SOURCE = 100000
-
-SEARCH_BACKENDS = (
-    "brave",
-    "google",
-    "bing",
-    "duckduckgo",
-    "yahoo",
-    "wikipedia",
-)
-
+SEARCH_BACKENDS = ("brave", "google", "bing", "duckduckgo", "yahoo", "wikipedia")
 SEARCH_DELAY_SECONDS = 0.25
 SCRAPE_TIMEOUT = 12
-
-# Metaculus must never be accessed by the scraper.
-# This blocks the main domain and all subdomains.
-BLOCKED_HOSTS = {
-    "metaculus.com",
-}
+BLOCKED_HOSTS = {"metaculus.com"}
 
 
 @dataclass
@@ -59,48 +31,26 @@ class ScrapedSource:
 
 
 def is_blocked_url(url: str) -> bool:
-    """Return True if the URL belongs to a blocked host."""
     try:
         hostname = (urlparse(url).hostname or "").lower()
     except Exception:
         return True
-
-    return (
-        hostname in BLOCKED_HOSTS
-        or hostname.endswith(".metaculus.com")
-    )
+    return hostname in BLOCKED_HOSTS or hostname.endswith(".metaculus.com")
 
 
 def _normalise_url(url: str) -> str:
-    """Normalise URLs enough for useful deduplication."""
-    url = url.strip()
-
+    url = (url or "").strip()
     if not url:
         return ""
-
     if "?" in url:
         base, query = url.split("?", 1)
-
         keep = []
-
         for item in query.split("&"):
             key = item.split("=", 1)[0].lower()
-
-            if key.startswith("utm_"):
+            if key.startswith("utm_") or key in {"fbclid", "gclid", "ref", "ref_src"}:
                 continue
-
-            if key in {
-                "fbclid",
-                "gclid",
-                "ref",
-                "ref_src",
-            }:
-                continue
-
             keep.append(item)
-
         url = base + (("?" + "&".join(keep)) if keep else "")
-
     return url.rstrip("/")
 
 
@@ -108,237 +58,155 @@ def _valid_result(result: dict) -> bool:
     url = result.get("href") or result.get("url") or ""
     title = result.get("title") or ""
     body = result.get("body") or ""
-
-    return bool(
-        isinstance(url, str)
-        and url.strip()
-        and (title.strip() or body.strip())
-    )
+    return bool(isinstance(url, str) and url.strip() and (title.strip() or body.strip()))
 
 
-def ddgs_search(
-    query: str,
-    max_results: int = 5,
-) -> list[dict]:
-    """
-    Search multiple DDGS backends independently.
-
-    A failure from one backend does not prevent other backends
-    from being tried.
-    """
-
+def ddgs_search(query: str, max_results: int = 5) -> list[dict]:
     query = query.strip()
-
     if not query:
         return []
 
-    all_results: list[dict] = []
+    results_out: list[dict] = []
     seen_urls: set[str] = set()
-
-    logger.info(
-        "[SEARCH] Searching %r across %d backends",
-        query,
-        len(SEARCH_BACKENDS),
-    )
 
     for backend in SEARCH_BACKENDS:
         try:
             with DDGS() as ddgs:
-                results = list(
-                    ddgs.text(
-                        query,
-                        region="us-en",
-                        safesearch="moderate",
-                        max_results=max_results,
-                        backend=backend,
-                    )
-                )
-
-            valid = 0
-
+                results = list(ddgs.text(
+                    query, region="us-en", safesearch="moderate",
+                    max_results=max_results, backend=backend,
+                ))
             for result in results:
                 if not _valid_result(result):
                     continue
-
-                url = _normalise_url(
-                    result.get("href")
-                    or result.get("url")
-                    or ""
-                )
-
-                # Never allow Metaculus results into the research pipeline.
-                if is_blocked_url(url):
-                    logger.info(
-                        "[SEARCH] Blocked Metaculus result: %s",
-                        url,
-                    )
+                url = _normalise_url(result.get("href") or result.get("url") or "")
+                if is_blocked_url(url) or not url or url in seen_urls:
                     continue
-
-                if not url or url in seen_urls:
-                    continue
-
                 seen_urls.add(url)
-
                 result = dict(result)
                 result["_backend"] = backend
                 result["_normalised_url"] = url
-
-                all_results.append(result)
-                valid += 1
-
-            logger.info(
-                "[SEARCH] backend=%s returned=%d usable=%d",
-                backend,
-                len(results),
-                valid,
-            )
-
-            if len(all_results) >= max_results:
+                results_out.append(result)
+                if len(results_out) >= max_results:
+                    break
+            if len(results_out) >= max_results:
                 break
-
         except Exception as exc:
-            logger.warning(
-                "[SEARCH] backend=%s failed for %r: %s",
-                backend,
-                query,
-                exc,
-            )
-
+            logger.warning("[SEARCH] backend=%s failed for %r: %s", backend, query, exc)
         time.sleep(SEARCH_DELAY_SECONDS)
 
-    logger.info(
-        "[SEARCH] query=%r produced %d unique results",
-        query,
-        len(all_results),
-    )
-
-    return all_results[:max_results]
+    return results_out[:max_results]
 
 
 def scrape_with_trafilatura(url: str) -> str | None:
-    """Fetch and extract article text using trafilatura."""
     try:
         downloaded = trafilatura.fetch_url(url)
-
         if not downloaded:
             return None
-
         text = trafilatura.extract(
-            downloaded,
-            include_comments=False,
-            include_tables=False,
+            downloaded, include_comments=False, include_tables=False
         )
-
         if not text:
             return None
-
         text = text.strip()
-
         return text if len(text) >= 100 else None
-
     except Exception as exc:
-        logger.debug(
-            "[SCRAPE] trafilatura failed for %s: %s",
-            url,
-            exc,
-        )
+        logger.debug("[SCRAPE] trafilatura failed for %s: %s", url, exc)
         return None
 
 
 def scrape_with_bs4(url: str) -> str | None:
-    """Fetch a page and extract paragraph text using BeautifulSoup."""
     try:
         response = requests.get(
-            url,
-            headers={"User-Agent": USER_AGENT},
-            timeout=SCRAPE_TIMEOUT,
-            allow_redirects=True,
+            url, headers={"User-Agent": USER_AGENT},
+            timeout=SCRAPE_TIMEOUT, allow_redirects=True,
         )
-
         response.raise_for_status()
-
-        # Check the final redirected URL as well.
         if is_blocked_url(response.url):
-            logger.info(
-                "[SCRAPE] Blocked redirect to Metaculus: %s",
-                response.url,
-            )
+            return None
+        content_type = response.headers.get("content-type", "").lower()
+        if "text/html" not in content_type and "application/xhtml" not in content_type:
             return None
 
-        content_type = response.headers.get(
-            "content-type",
-            "",
-        ).lower()
-
-        if (
-            "text/html" not in content_type
-            and "application/xhtml" not in content_type
-        ):
-            return None
-
-        soup = BeautifulSoup(
-            response.text,
-            "html.parser",
-        )
-
-        for tag in soup(
-            [
-                "script",
-                "style",
-                "nav",
-                "footer",
-                "header",
-                "noscript",
-                "svg",
-                "form",
-            ]
-        ):
+        soup = BeautifulSoup(response.text, "html.parser")
+        for tag in soup(["script", "style", "nav", "footer", "header", "noscript", "svg", "form"]):
             tag.decompose()
 
-        paragraphs = []
-
-        for paragraph in soup.find_all("p"):
-            text = paragraph.get_text(
-                " ",
-                strip=True,
-            )
-
-            if len(text) >= 40:
-                paragraphs.append(text)
-
+        paragraphs = [
+            p.get_text(" ", strip=True)
+            for p in soup.find_all("p")
+            if len(p.get_text(" ", strip=True)) >= 40
+        ]
         text = "\n".join(paragraphs).strip()
-
         return text if len(text) >= 100 else None
-
     except Exception as exc:
-        logger.debug(
-            "[SCRAPE] BeautifulSoup failed for %s: %s",
-            url,
-            exc,
-        )
+        logger.debug("[SCRAPE] BeautifulSoup failed for %s: %s", url, exc)
         return None
 
 
-def scrape_url(url: str) -> tuple[str, str]:
-    """Try multiple extraction methods."""
+def scrape_with_ddgs_snippet(
+    url: str,
+    title: str = "",
+    original_snippet: str = "",
+) -> str | None:
+    """
+    FINAL scraper layer.
 
-    # Safety boundary: Metaculus must never be fetched.
+    DDGS can return indexed search-result snippets even when the live URL
+    cannot be downloaded. Search the exact URL first, then the page title.
+    """
     if is_blocked_url(url):
-        logger.info(
-            "[SCRAPE] Blocked Metaculus URL: %s",
-            url,
-        )
+        return None
+
+    target = _normalise_url(url)
+    searches = [f'"{url}"']
+    if title.strip():
+        searches.append(f'"{title.strip()}"')
+
+    for query in searches:
+        try:
+            with DDGS() as ddgs:
+                results = list(ddgs.text(
+                    query,
+                    region="us-en",
+                    safesearch="moderate",
+                    max_results=8,
+                    backend="auto",
+                ))
+
+            for result in results:
+                result_url = _normalise_url(
+                    result.get("href") or result.get("url") or ""
+                )
+                body = (result.get("body") or "").strip()
+                if is_blocked_url(result_url):
+                    continue
+                if result_url == target and len(body) >= 40:
+                    return body
+        except Exception as exc:
+            logger.debug("[SCRAPE] DDGS snippet fallback failed for %s: %s", url, exc)
+
+    # The original DDGS result snippet is still a valid final source of text.
+    return original_snippet.strip() if len(original_snippet.strip()) >= 40 else None
+
+
+def scrape_url(url: str, title: str = "", snippet: str = "") -> tuple[str, str]:
+    if is_blocked_url(url):
         return "", "blocked"
 
     text = scrape_with_trafilatura(url)
-
     if text:
         return text, "trafilatura"
 
     text = scrape_with_bs4(url)
-
     if text:
         return text, "bs4"
+
+    text = scrape_with_ddgs_snippet(
+        url, title=title, original_snippet=snippet
+    )
+    if text:
+        return text, "ddgs_snippet"
 
     return "", "failed"
 
@@ -347,137 +215,62 @@ def gather_sources(
     queries: Iterable[str],
     results_per_query: int = 3,
 ) -> list[ScrapedSource]:
-    """
-    Search all supplied queries and return usable sources.
-
-    Search snippets can be used when the actual page cannot be scraped.
-    """
-
     sources: list[ScrapedSource] = []
     seen_urls: set[str] = set()
-
-    queries = [
-        q.strip()
-        for q in queries
-        if isinstance(q, str) and q.strip()
-    ]
-
-    logger.info(
-        "[RESEARCH] Starting source gathering: %d queries",
-        len(queries),
-    )
+    queries = [q.strip() for q in queries if isinstance(q, str) and q.strip()]
 
     for query_index, query in enumerate(queries, start=1):
         logger.info(
             "[RESEARCH] Query %d/%d: %s",
-            query_index,
-            len(queries),
-            query,
+            query_index, len(queries), query,
         )
-
-        results = ddgs_search(
-            query,
-            max_results=results_per_query,
-        )
-
-        if not results:
-            logger.warning(
-                "[RESEARCH] Query produced no search results: %s",
-                query,
-            )
-            continue
+        results = ddgs_search(query, max_results=results_per_query)
 
         for result in results:
-            url = _normalise_url(
-                result.get("href")
-                or result.get("url")
-                or ""
-            )
-
-            # Second safety boundary.
-            if is_blocked_url(url):
-                logger.info(
-                    "[RESEARCH] Skipping blocked Metaculus result: %s",
-                    url,
-                )
-                continue
-
-            if not url or url in seen_urls:
+            url = _normalise_url(result.get("href") or result.get("url") or "")
+            if is_blocked_url(url) or not url or url in seen_urls:
                 continue
 
             seen_urls.add(url)
+            title = (result.get("title") or url).strip()
+            snippet = (result.get("body") or "").strip()
+            backend = result.get("_backend") or "unknown"
 
-            title = result.get("title") or url
-
-            snippet = (
-                result.get("body")
-                or ""
-            ).strip()
-
-            backend = (
-                result.get("_backend")
-                or "unknown"
+            content, method = scrape_url(
+                url, title=title, snippet=snippet
             )
-
-            content, method = scrape_url(url)
-
-            # If page scraping fails, use the search-engine snippet.
-            if not content and len(snippet) >= 40:
-                content = snippet
-                method = "search_snippet"
-
             if not content:
-                logger.debug(
-                    "[RESEARCH] Discarding unusable result: %s",
-                    url,
-                )
                 continue
 
-            sources.append(
-                ScrapedSource(
-                    query=query,
-                    title=title,
-                    url=url,
-                    snippet=snippet,
-                    content=content[:MAX_CHARS_PER_SOURCE],
-                    method=method,
-                    backend=backend,
-                )
-            )
-
+            sources.append(ScrapedSource(
+                query=query,
+                title=title,
+                url=url,
+                snippet=snippet,
+                content=content[:MAX_CHARS_PER_SOURCE],
+                method=method,
+                backend=backend,
+            ))
             logger.info(
                 "[SOURCE] accepted backend=%s method=%s url=%s",
-                backend,
-                method,
-                url,
+                backend, method, url,
             )
 
     logger.info(
         "[RESEARCH] Source gathering complete: %d usable sources",
         len(sources),
     )
-
     return sources
 
 
-def format_sources_as_markdown(
-    sources: list[ScrapedSource],
-) -> str:
-    """Format gathered sources for the research model."""
-
+def format_sources_as_markdown(sources: list[ScrapedSource]) -> str:
     if not sources:
         return "NO_RESEARCH_AVAILABLE"
 
-    blocks = []
-
-    for source in sources:
-        blocks.append(
-            f"### {source.title or source.url}\n"
-            f"Source: {source.url}\n"
-            f"(query: {source.query!r}; "
-            f"backend: {source.backend}; "
-            f"extraction: {source.method})\n\n"
-            f"{source.content}\n"
-        )
-
-    return "\n---\n".join(blocks)
+    return "\n---\n".join(
+        f"### {source.title or source.url}\n"
+        f"Source: {source.url}\n"
+        f"(query: {source.query!r}; backend: {source.backend}; extraction: {source.method})\n\n"
+        f"{source.content}\n"
+        for source in sources
+    )
