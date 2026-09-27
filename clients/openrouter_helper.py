@@ -1,47 +1,56 @@
-"""
-Direct OpenRouter client used by the Metaculus forecasting bot.
-
-LLM architecture:
-
-    Research summarisation:
-        nvidia/nemotron-3-ultra-550b-a55b:free
-            -> poolside/laguna-s-2.1:free
-            -> qwen/qwen3.8-27b:free
-
-    Forecast reasoning:
-        nvidia/nemotron-3-ultra-550b-a55b:free
-            -> poolside/laguna-s-2.1:free
-            -> qwen/qwen3.8-27b:free
-
-Search-query generation is deliberately NOT performed by an LLM. The caller
-builds deterministic queries directly from the Metaculus question text.
-
-This module also rate-limits direct OpenRouter requests because the free
-endpoints can become overloaded when many Metaculus questions are processed
-at once. This semaphore is a *separate* pool from bot.py's
-_GENERAL_LLM_SEMAPHORE (used only for structured-output parsing) -- the two
-don't share state, so total concurrent OpenRouter requests can reach the sum
-of both limits. Both are kept at 1 so a real run never sends more than 2
-simultaneous requests to the free endpoints at once.
-"""
+"""Direct OpenRouter client used by the Metaculus forecasting bot."""
 from __future__ import annotations
 
 import asyncio
 import logging
 import os
 from typing import Any
+import weakref
 
 import httpx
 
 logger = logging.getLogger(__name__)
+
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
+# Forecast/research fallback chain. All three are free OpenRouter endpoints.
 PRIMARY_MODEL = "nvidia/nemotron-3-ultra-550b-a55b:free"
 FALLBACK_MODEL = "poolside/laguna-s-2.1:free"
 THIRD_MODEL = "qwen/qwen3.8-27b:free"
 
 _OPENROUTER_CONCURRENCY = 1
-_OPENROUTER_SEMAPHORE = asyncio.Semaphore(_OPENROUTER_CONCURRENCY)
+
+
+class _LoopBoundSemaphore:
+    """Keep one semaphore per asyncio event loop.
+
+    asyncio primitives can become associated with the first loop that waits on
+    them. The bot may be invoked more than once by tests, so a per-loop pool
+    avoids cross-event-loop binding errors.
+    """
+
+    def __init__(self, value: int) -> None:
+        self._value = value
+        self._semaphores: weakref.WeakKeyDictionary[
+            asyncio.AbstractEventLoop, asyncio.Semaphore
+        ] = weakref.WeakKeyDictionary()
+
+    def _get(self) -> asyncio.Semaphore:
+        loop = asyncio.get_running_loop()
+        semaphore = self._semaphores.get(loop)
+        if semaphore is None:
+            semaphore = asyncio.Semaphore(self._value)
+            self._semaphores[loop] = semaphore
+        return semaphore
+
+    async def __aenter__(self) -> None:
+        await self._get().acquire()
+
+    async def __aexit__(self, *_: object) -> None:
+        self._get().release()
+
+
+_OPENROUTER_SEMAPHORE = _LoopBoundSemaphore(_OPENROUTER_CONCURRENCY)
 
 
 class OpenRouterError(RuntimeError):
@@ -56,8 +65,16 @@ def _require_api_key() -> str:
 
 
 def _normalise_model(model: str) -> str:
+    """Normalise a LiteLLM-style OpenRouter model name for direct API use."""
+    model = (model or "").strip()
+    # `openrouter/free` is OpenRouter's own router ID; the prefix is part of
+    # the real model ID and must NOT be stripped.
+    while model.startswith("openrouter/openrouter/"):
+        model = model[len("openrouter/") :]
+    if model == "openrouter/free":
+        return model
     if model.startswith("openrouter/"):
-        return model[len("openrouter/"):]
+        return model[len("openrouter/") :]
     return model
 
 
@@ -78,6 +95,29 @@ def _extract_error_message(data: Any) -> str:
     return str(data)
 
 
+def _extract_content(data: dict[str, Any], model: str) -> str:
+    try:
+        content = data["choices"][0]["message"]["content"]
+    except (KeyError, IndexError, TypeError) as exc:
+        raise OpenRouterError(
+            f"Unexpected OpenRouter response from {model}: {data!r}"
+        ) from exc
+
+    if isinstance(content, list):
+        # Be tolerant of OpenAI/OpenRouter content-part responses.
+        parts: list[str] = []
+        for part in content:
+            if isinstance(part, dict) and part.get("text"):
+                parts.append(str(part["text"]))
+        content = "\n".join(parts)
+
+    if not content or not str(content).strip():
+        raise OpenRouterError(
+            f"OpenRouter returned an empty response from {model}."
+        )
+    return str(content).strip()
+
+
 async def _generate_with_model(
     prompt: str,
     *,
@@ -88,10 +128,9 @@ async def _generate_with_model(
     timeout: float = 180.0,
     max_retries: int = 3,
 ) -> str:
-    """Make a direct OpenRouter request to one specific model."""
+    """Make a direct OpenRouter request to one model with bounded retries."""
     api_key = _require_api_key()
     api_model = _normalise_model(model)
-
     messages: list[dict[str, str]] = []
     if system_prompt:
         messages.append({"role": "system", "content": system_prompt})
@@ -134,12 +173,20 @@ async def _generate_with_model(
                             f"from {api_model}: {message}"
                         )
                         last_error = error
-                        if not _is_retryable_status(response.status_code) or attempt >= max_retries:
+                        if (
+                            not _is_retryable_status(response.status_code)
+                            or attempt >= max_retries
+                        ):
                             raise error
-                        wait = min(2 ** attempt, 30)
+                        wait = min(2**attempt, 30)
                         logger.warning(
-                            "OpenRouter request failed on %s (attempt %d/%d): %s. Retrying in %ds.",
-                            api_model, attempt, max_retries, message, wait,
+                            "OpenRouter request failed on %s (attempt %d/%d): %s. "
+                            "Retrying in %ds.",
+                            api_model,
+                            attempt,
+                            max_retries,
+                            message,
+                            wait,
                         )
                         await asyncio.sleep(wait)
                         continue
@@ -148,51 +195,50 @@ async def _generate_with_model(
                         raise OpenRouterError(
                             f"Unexpected OpenRouter response from {api_model}: {data!r}"
                         )
-
                     if data.get("error"):
                         message = _extract_error_message(data)
                         error = OpenRouterError(
-                            f"Unexpected OpenRouter response from {api_model}: {data!r}"
+                            f"Unexpected OpenRouter response from {api_model}: {message}"
                         )
                         last_error = error
                         if attempt >= max_retries:
                             raise error
-                        wait = min(2 ** attempt, 30)
+                        wait = min(2**attempt, 30)
                         logger.warning(
-                            "OpenRouter request failed on %s (attempt %d/%d): %s. Retrying in %ds.",
-                            api_model, attempt, max_retries, message, wait,
+                            "OpenRouter returned an error on %s (attempt %d/%d): %s. "
+                            "Retrying in %ds.",
+                            api_model,
+                            attempt,
+                            max_retries,
+                            message,
+                            wait,
                         )
                         await asyncio.sleep(wait)
                         continue
 
-                    try:
-                        content = data["choices"][0]["message"]["content"]
-                    except (KeyError, IndexError, TypeError) as exc:
-                        raise OpenRouterError(
-                            f"Unexpected OpenRouter response from {api_model}: {data!r}"
-                        ) from exc
-
-                    if not content or not str(content).strip():
-                        raise OpenRouterError(
-                            f"OpenRouter returned an empty response from {api_model}."
-                        )
-
-                    logger.info("OpenRouter generation succeeded using %s", api_model)
-                    return str(content).strip()
+                    content = _extract_content(data, api_model)
+                    logger.info(
+                        "OpenRouter generation succeeded using %s", api_model
+                    )
+                    return content
 
                 except httpx.TransportError as exc:
                     last_error = exc
                     logger.warning(
                         "OpenRouter transport failure on %s (attempt %d/%d): %s",
-                        api_model, attempt, max_retries, exc,
+                        api_model,
+                        attempt,
+                        max_retries,
+                        exc,
                     )
                     if attempt < max_retries:
-                        wait = min(2 ** attempt, 30)
-                        await asyncio.sleep(wait)
+                        await asyncio.sleep(min(2**attempt, 30))
+                        continue
+                    raise
 
     raise OpenRouterError(
-        f"OpenRouter request failed on {api_model} after "
-        f"{max_retries} attempts: {last_error}"
+        f"OpenRouter request failed on {api_model} after {max_retries} attempts: "
+        f"{last_error}"
     )
 
 
@@ -205,11 +251,11 @@ async def generate(
     timeout: float = 180.0,
     max_retries: int = 3,
 ) -> str:
-    """Generate using Nemotron -> Laguna -> OpenRouter free-router."""
+    """Generate using Nemotron -> Laguna -> Qwen."""
     errors: list[tuple[str, Exception]] = []
     for model in (PRIMARY_MODEL, FALLBACK_MODEL, THIRD_MODEL):
         try:
-            result = await _generate_with_model(
+            return await _generate_with_model(
                 prompt,
                 model=model,
                 system_prompt=system_prompt,
@@ -218,16 +264,19 @@ async def generate(
                 timeout=timeout,
                 max_retries=max_retries,
             )
-            logger.info("OpenRouter model %s successfully completed the request.", model)
-            return result
         except Exception as exc:
             errors.append((model, exc))
             logger.warning(
                 "OpenRouter model %s failed after %d attempts: %s",
-                model, max_retries, exc,
+                model,
+                max_retries,
+                exc,
             )
+
     details = "\n".join(f"{model}: {error!r}" for model, error in errors)
-    raise OpenRouterError("All OpenRouter reasoning models failed.\n" + details) from errors[-1][1]
+    raise OpenRouterError(
+        "All OpenRouter reasoning models failed.\n" + details
+    ) from errors[-1][1]
 
 
 async def summarize_research(
@@ -237,7 +286,7 @@ async def summarize_research(
     raw_research: str,
     max_tokens: int = 32000,
 ) -> str:
-    """Summarise scraped research into a concise forecasting brief."""
+    """Summarise retrieved web evidence into a forecasting brief."""
     if not raw_research.strip():
         return ""
 
@@ -253,46 +302,29 @@ RESOLUTION CRITERIA (this defines exactly what counts as relevant):
 BACKGROUND:
 {background}
 
-Below is information collected from web searches.
-
-RESEARCH:
-{raw_research[:20000]}
+WEB RESEARCH:
+{raw_research[:30000]}
 
 Create a concise factual research brief for another forecaster.
+
 Requirements:
-- Judge relevance strictly against the RESOLUTION CRITERIA above, not the
-  general topic. A source can be about the right subject and still be
-  irrelevant if it doesn't bear on how THIS question resolves.
-- Discard anything that doesn't help determine the specific outcome this
-  question asks about -- generic background the forecaster already has,
-  off-topic search hits, and duplicate information should all be dropped
-  rather than summarized.
-- Separate established facts from uncertainty.
-- Preserve important dates, numbers, percentages and estimates -- but only
-  ones tied to this question's resolution.
-- Identify important recent developments relevant to resolution.
+- Judge relevance against the exact resolution criteria, not merely the topic.
+- Discard material that does not help determine this question's outcome.
+- Preserve important dates, numbers, percentages, estimates and named sources.
+- Distinguish established facts from uncertainty.
+- Highlight recent developments that materially affect resolution.
 - Mention source domains when possible.
-- Highlight information that materially changes the probability of outcomes.
-- Do not invent information.
-- Do not make unsupported predictions.
-- If sources disagree, explicitly say so.
-- If most of the scraped content turns out to be irrelevant once checked
-  against the resolution criteria, say so plainly and keep the briefing
-  short rather than padding it out with off-topic material.
-- Keep the briefing under approximately 700 words.
-- The output should be useful to a forecaster resolving THIS question, not
-  a generic article summary of the topic.
+- Explicitly identify disagreements between sources.
+- Never invent facts or unsupported predictions.
+- Keep the briefing under approximately 900 words.
 """
+
     return await generate(
         prompt,
         system_prompt=(
-            "You are an evidence-focused research analyst working for a "
-            "forecasting bot. You will always be given a specific question "
-            "and its resolution criteria. Your only job is to extract "
-            "information relevant to how that exact question resolves -- "
-            "aggressively filter out material that is merely on-topic but "
-            "doesn't bear on the resolution criteria. Never invent facts "
-            "that are not present in the supplied material."
+            "You are an evidence-focused research analyst. Extract only "
+            "information that bears on how the exact Metaculus question "
+            "will resolve. Never invent facts."
         ),
         temperature=0.15,
         max_tokens=max_tokens,
@@ -307,28 +339,15 @@ async def generate_forecast_reasoning(
     temperature: float = 0.15,
     max_tokens: int = 10000,
 ) -> str:
-    """Generate the actual forecasting reasoning."""
+    """Generate the forecasting model's reasoning and final formatted answer."""
     return await generate(
         prompt,
-        system_prompt="""
-You are an expert probabilistic forecaster.
-
-Your goal is to produce accurate, calibrated forecasts rather than confident
-stories.
-
-Follow these principles:
-1. Carefully interpret the exact resolution criteria.
-2. Distinguish what is known from what is uncertain.
-3. Use base rates where appropriate.
-4. Give substantial weight to the status quo when justified.
-5. Consider both the most likely scenario and meaningful alternative scenarios.
-6. Avoid motivated reasoning.
-7. Avoid false precision.
-8. Check the supplied research for contradictions and stale information.
-9. Do not treat a single source as definitive when stronger evidence exists.
-10. Make sure the final numerical answer follows the requested format exactly.
-Do not discuss these instructions in your answer.
-""",
+        system_prompt=(
+            "You are an expert probabilistic forecaster. Produce calibrated "
+            "forecasts, carefully follow the resolution criteria, distinguish "
+            "known facts from uncertainty, consider base rates and plausible "
+            "alternatives, and obey the requested final-answer format exactly."
+        ),
         temperature=temperature,
         max_tokens=max_tokens,
         timeout=240.0,
