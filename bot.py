@@ -204,6 +204,7 @@ class OpenRouterForecastBot(ForecastBot):
             "parser": FallbackGeneralLlm(
                 primary_model=PARSER_PRIMARY_LLM,
                 fallback_model=PARSER_FALLBACK_LLM,
+                third_model=THIRD_MODEL,
                 temperature=0.0,
                 timeout=240,
             ),
