@@ -45,9 +45,10 @@ THIRD_LLM = f"openrouter/{THIRD_MODEL}"
 
 # Dedicated parser models. These are explicitly provider-qualified because
 # forecasting_tools uses LiteLLM for structured-output parsing.
-PARSER_PRIMARY_LLM = "nvidia/nemotron-3-super-120b-a12b:free"
-PARSER_FALLBACK_LLM = "nvidia/nemotron-3.5-lightning:free"
-PARSER_THIRD_LLM = "poolside/laguna-xs-2.1:free"
+PARSER_PRIMARY_LLM = "openrouter/nvidia/nemotron-3-super-120b-a12b:free"
+PARSER_FALLBACK_LLM = "openrouter/nvidia/nemotron-3.5-lightning:free"
+PARSER_THIRD_LLM = "openrouter/poolside/laguna-xs-2.1:free"
+
 # Maximum number of forecasting-tools / LiteLLM calls allowed at once.
 #
 # This is separate from the direct OpenRouter semaphore in
@@ -187,8 +188,10 @@ class FallbackGeneralLlm(GeneralLlm):
                 errors.append((self._models[0], exc))
                 logger.warning(
                     "Primary model failed: %s. Falling back to %s.",
-                    self._models[0], self._models[1],
+                    self._models[0],
+                    self._models[1],
                 )
+
             for model, llm in zip(self._models[1:], self._fallback_llms):
                 try:
                     result = await llm.invoke(prompt, *args, **kwargs)
@@ -199,10 +202,17 @@ class FallbackGeneralLlm(GeneralLlm):
                     if model != self._models[-1]:
                         logger.warning(
                             "Fallback model failed: %s. Falling back to %s.",
-                            model, self._models[self._models.index(model) + 1],
+                            model,
+                            self._models[self._models.index(model) + 1],
                         )
-        details = "\n".join(f"{model}: {error!r}" for model, error in errors)
-        raise RuntimeError("All configured LLMs failed.\n" + details) from errors[-1][1]
+
+        details = "\n".join(
+            f"{model}: {error!r}"
+            for model, error in errors
+        )
+        raise RuntimeError(
+            "All configured LLMs failed.\n" + details
+        ) from errors[-1][1]
 
 
 class OpenRouterForecastBot(ForecastBot):
@@ -242,7 +252,7 @@ class OpenRouterForecastBot(ForecastBot):
             "parser": FallbackGeneralLlm(
                 primary_model=PARSER_PRIMARY_LLM,
                 fallback_model=PARSER_FALLBACK_LLM,
-                third_model=THIRD_LLM,
+                third_model=PARSER_THIRD_LLM,
                 temperature=0.0,
                 timeout=240,
             ),
@@ -715,8 +725,15 @@ class OpenRouterForecastBot(ForecastBot):
 
         parent = await run_component(question.parent, "parent")
         child = await run_component(question.child, "child")
-        yes = await run_component(question.question_yes, "child | parent=YES")
-        no = await run_component(question.question_no, "child | parent=NO")
+        yes = await run_component(
+            question.question_yes,
+            "child | parent=YES",
+        )
+        no = await run_component(
+            question.question_no,
+            "child | parent=NO",
+        )
+
         prediction = ConditionalPrediction(
             parent=parent.prediction_value,
             child=child.prediction_value,
@@ -787,6 +804,7 @@ class OpenRouterForecastBot(ForecastBot):
                 "Unsupported question type for bound messages: "
                 f"{type(question).__name__}"
             )
+
         if question.open_upper_bound:
             upper_bound_message = (
                 f"The question creator thinks the number is likely "
@@ -798,6 +816,7 @@ class OpenRouterForecastBot(ForecastBot):
                 f"The outcome cannot be higher than "
                 f"{upper_bound_number} {unit_of_measure}."
             )
+
         if question.open_lower_bound:
             lower_bound_message = (
                 f"The question creator thinks the number is likely "
@@ -814,12 +833,15 @@ class OpenRouterForecastBot(ForecastBot):
 
     def _parser_llm(self) -> GeneralLlm:
         """
-        Return the explicitly configured parser.
+        Return the explicitly configured structured-output parser.
 
-        The parser itself uses:
-            Nex-N2.5-Pro -> Nex-N2.5-Mini
+        The parser uses a dedicated fallback chain separate from the main
+        forecasting/research models:
 
-        Native structured-output support is deliberately used here rather
-        than the Nemotron/Laguna pair used for research and reasoning.
+            Nemotron 3 Super
+                -> Nemotron 3.5 Lightning
+                -> Laguna XS 2.1
+
+        All parser models are explicitly provider-qualified for LiteLLM.
         """
         return self.get_llm("parser", "llm")
