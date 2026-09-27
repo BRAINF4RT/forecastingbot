@@ -119,6 +119,7 @@ async def free_web_research(
                 query,
                 4,
                 True,
+                question_text,
             )
         except Exception as exc:
             logger.warning(
