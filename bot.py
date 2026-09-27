@@ -80,9 +80,9 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Model configuration
 # ---------------------------------------------------------------------------
-
 PRIMARY_LLM = f"openrouter/{PRIMARY_MODEL}"
 FALLBACK_LLM = f"openrouter/{FALLBACK_MODEL}"
+THIRD_LLM = f"openrouter/{THIRD_MODEL}"
 # Dedicated parser models: these need reliable native structured-output
 # support, which Nemotron/Laguna do not advertise. Verified live on
 # OpenRouter's free tier -- re-check https://openrouter.ai/models?max_price=0
@@ -262,28 +262,28 @@ class OpenRouterForecastBot(ForecastBot):
             "default": FallbackGeneralLlm(
                 primary_model=PRIMARY_LLM,
                 fallback_model=FALLBACK_LLM,
-                third_model=THIRD_MODEL,
+                third_model=THIRD_LLM,
                 temperature=0.15,
                 timeout=240,
             ),
             "summarizer": FallbackGeneralLlm(
                 primary_model=PRIMARY_LLM,
                 fallback_model=FALLBACK_LLM,
-                third_model=THIRD_MODEL,
+                third_model=THIRD_LLM,
                 temperature=0.10,
                 timeout=240,
             ),
             "researcher": FallbackGeneralLlm(
                 primary_model=PRIMARY_LLM,
                 fallback_model=FALLBACK_LLM,
-                third_model=THIRD_MODEL,
+                third_model=THIRD_LLM,
                 temperature=0.10,
                 timeout=240,
             ),
             "parser": FallbackGeneralLlm(
                 primary_model=PARSER_PRIMARY_LLM,
                 fallback_model=PARSER_FALLBACK_LLM,
-                third_model=THIRD_MODEL,
+                third_model=THIRD_LLM,
                 temperature=0.0,
                 timeout=240,
             ),
