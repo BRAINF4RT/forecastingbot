@@ -32,7 +32,7 @@ OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 PRIMARY_MODEL = "nvidia/nemotron-3-ultra-550b-a55b:free"
 FALLBACK_MODEL = "poolside/laguna-s-2.1:free"
-THIRD_MODEL = "openrouter/free"
+THIRD_MODEL = "qwen/qwen3.8-27b:free"
 
 _OPENROUTER_CONCURRENCY = 2
 _OPENROUTER_SEMAPHORE = asyncio.Semaphore(_OPENROUTER_CONCURRENCY)
