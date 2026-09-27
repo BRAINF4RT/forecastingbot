@@ -23,9 +23,9 @@ from forecasting_tools import MetaculusClient  # noqa: E402
 from bot import (  # noqa: E402
     FALLBACK_LLM,
     PRIMARY_LLM,
-    THIRD_MODEL,
     OpenRouterForecastBot,
 )
+from clients.openrouter_helper import THIRD_MODEL  # noqa: E402
 
 dotenv.load_dotenv()
 
@@ -99,7 +99,12 @@ def validate_openrouter_configuration() -> None:
 
 def create_bot() -> OpenRouterForecastBot:
     return OpenRouterForecastBot(
-        research_reports_per_question=2,
+        # Was 2 -- this made the bot run research (and the full forecast
+        # chain) TWICE per question, doubling LLM calls, doubling free-tier
+        # rate-limit exposure, and roughly doubling wall-clock time. One
+        # research pass is enough; predictions_per_research_report already
+        # gives you multiple forecast samples off that single research pass.
+        research_reports_per_question=1,
         predictions_per_research_report=3,
         use_research_summary_to_forecast=False,
         publish_reports_to_metaculus=True,
@@ -280,4 +285,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
