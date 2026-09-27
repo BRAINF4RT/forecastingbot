@@ -48,6 +48,8 @@ from typing import Any
 from forecasting_tools import (
     BinaryPrediction,
     BinaryQuestion,
+    ConditionalPrediction,
+    ConditionalQuestion,
     DateQuestion,
     ForecastBot,
     GeneralLlm,
@@ -57,6 +59,8 @@ from forecasting_tools import (
     NumericQuestion,
     Percentile,
     PredictedOptionList,
+    PredictionAffirmed,
+    PredictionTypes,
     ReasonedPrediction,
     clean_indents,
     structure_output,
@@ -64,6 +68,7 @@ from forecasting_tools import (
 from clients.openrouter_helper import (
     FALLBACK_MODEL,
     PRIMARY_MODEL,
+    THIRD_MODEL,
     generate_forecast_reasoning,
 )
 from research.pipeline import run_research_pipeline
@@ -96,22 +101,14 @@ _GENERAL_LLM_SEMAPHORE = asyncio.Semaphore(
 
 
 class FallbackGeneralLlm(GeneralLlm):
-    """
-    GeneralLlm wrapper with explicit primary -> fallback behaviour.
-
-    The wrapper deliberately uses allowed_tries=1 on each underlying model.
-    The wrapper itself controls the fallback so that we don't get multiple
-    layers of hidden retries.
-
-    It also shares a semaphore across all instances to prevent a burst of
-    simultaneous requests against free OpenRouter endpoints.
-    """
+    """GeneralLlm wrapper with primary -> fallback -> final fallback."""
 
     def __init__(
         self,
         *,
         primary_model: str,
         fallback_model: str,
+        third_model: str,
         temperature: float,
         timeout: float,
     ) -> None:
@@ -121,77 +118,50 @@ class FallbackGeneralLlm(GeneralLlm):
             timeout=timeout,
             allowed_tries=1,
         )
-
-        self._primary_model_name = primary_model
-        self._fallback_model_name = fallback_model
-
-        self._fallback_llm = GeneralLlm(
-            model=fallback_model,
-            temperature=temperature,
-            timeout=timeout,
-            allowed_tries=1,
+        self._models = (primary_model, fallback_model, third_model)
+        self._fallback_llms = (
+            GeneralLlm(
+                model=fallback_model,
+                temperature=temperature,
+                timeout=timeout,
+                allowed_tries=1,
+            ),
+            GeneralLlm(
+                model=third_model,
+                temperature=temperature,
+                timeout=timeout,
+                allowed_tries=1,
+            ),
         )
 
-    async def invoke(
-        self,
-        prompt: str,
-        *args: Any,
-        **kwargs: Any,
-    ) -> Any:
-        """
-        Try the primary model once, then the fallback once.
-
-        The forecasting_tools GeneralLlm itself has allowed_tries=1 so this
-        wrapper is the component responsible for model failover.
-        """
-
-        primary_error: Exception | None = None
+    async def invoke(self, prompt: str, *args: Any, **kwargs: Any) -> Any:
+        errors: list[tuple[str, Exception]] = []
 
         async with _GENERAL_LLM_SEMAPHORE:
             try:
-                logger.debug(
-                    "Calling primary LLM: %s",
-                    self._primary_model_name,
-                )
-
-                return await super().invoke(
-                    prompt,
-                    *args,
-                    **kwargs,
-                )
-
+                return await super().invoke(prompt, *args, **kwargs)
             except Exception as exc:
-                primary_error = exc
-
+                errors.append((self._models[0], exc))
                 logger.warning(
-                    "Primary model failed: %s. "
-                    "Falling back to %s.",
-                    self._primary_model_name,
-                    self._fallback_model_name,
+                    "Primary model failed: %s. Falling back to %s.",
+                    self._models[0], self._models[1],
                 )
 
-            try:
-                result = await self._fallback_llm.invoke(
-                    prompt,
-                    *args,
-                    **kwargs,
-                )
+            for model, llm in zip(self._models[1:], self._fallback_llms):
+                try:
+                    result = await llm.invoke(prompt, *args, **kwargs)
+                    logger.info("Fallback model succeeded: %s", model)
+                    return result
+                except Exception as exc:
+                    errors.append((model, exc))
+                    if model != self._models[-1]:
+                        logger.warning(
+                            "Fallback model failed: %s. Falling back to %s.",
+                            model, self._models[self._models.index(model) + 1],
+                        )
 
-                logger.info(
-                    "Fallback model succeeded: %s",
-                    self._fallback_model_name,
-                )
-
-                return result
-
-            except Exception as fallback_error:
-                raise RuntimeError(
-                    "Both LLMs failed.\n"
-                    f"Primary ({self._primary_model_name}): "
-                    f"{primary_error!r}\n"
-                    f"Fallback ({self._fallback_model_name}): "
-                    f"{fallback_error!r}"
-                ) from fallback_error
+        details = "\n".join(f"{model}: {error!r}" for model, error in errors)
+        raise RuntimeError("All configured LLMs failed.\n" + details) from errors[-1][1]
 
 
 class OpenRouterForecastBot(ForecastBot):
@@ -213,18 +183,21 @@ class OpenRouterForecastBot(ForecastBot):
             "default": FallbackGeneralLlm(
                 primary_model=PRIMARY_LLM,
                 fallback_model=FALLBACK_LLM,
+                third_model=THIRD_MODEL,
                 temperature=0.15,
                 timeout=240,
             ),
             "summarizer": FallbackGeneralLlm(
                 primary_model=PRIMARY_LLM,
                 fallback_model=FALLBACK_LLM,
+                third_model=THIRD_MODEL,
                 temperature=0.10,
                 timeout=240,
             ),
             "researcher": FallbackGeneralLlm(
                 primary_model=PRIMARY_LLM,
                 fallback_model=FALLBACK_LLM,
+                third_model=THIRD_MODEL,
                 temperature=0.10,
                 timeout=240,
             ),
@@ -679,6 +652,62 @@ class OpenRouterForecastBot(ForecastBot):
         prediction = NumericDistribution.from_question(
             percentile_list,
             question,
+        )
+
+        return ReasonedPrediction(
+            prediction_value=prediction,
+            reasoning=reasoning,
+        )
+
+    # -----------------------------------------------------------------------
+    # CONDITIONAL
+    # -----------------------------------------------------------------------
+
+    async def _run_forecast_on_conditional(
+        self,
+        question: ConditionalQuestion,
+        research: str,
+    ) -> ReasonedPrediction[ConditionalPrediction]:
+        """Forecast the four linked binary components of a conditional question."""
+
+        async def run_component(
+            subquestion: BinaryQuestion,
+            label: str,
+        ) -> ReasonedPrediction[float]:
+            result = await self._run_forecast_on_binary(subquestion, research)
+            logger.info(
+                "Conditional component %s forecast: %.4f",
+                label,
+                result.prediction_value,
+            )
+            return result
+
+        parent = await run_component(question.parent, "parent")
+        child = await run_component(question.child, "child")
+        yes = await run_component(question.question_yes, "child | parent=YES")
+        no = await run_component(question.question_no, "child | parent=NO")
+
+        prediction = ConditionalPrediction(
+            parent=parent.prediction_value,
+            child=child.prediction_value,
+            prediction_yes=yes.prediction_value,
+            prediction_no=no.prediction_value,
+        )
+
+        reasoning = clean_indents(
+            f"""
+            ## Parent Question
+            {parent.reasoning}
+
+            ## Child Question
+            {child.reasoning}
+
+            ## Child Conditional on Parent = YES
+            {yes.reasoning}
+
+            ## Child Conditional on Parent = NO
+            {no.reasoning}
+            """
         )
 
         return ReasonedPrediction(
