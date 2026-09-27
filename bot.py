@@ -2,64 +2,73 @@
 OpenRouter Metaculus Forecast Bot.
 
 LLM architecture:
-
-    Search query generation
-        Deterministic, rule-based construction from the question text.
-        No LLM is involved in building search queries.
-            |
-            v
-    DDGS web research (Trafilatura -> BeautifulSoup -> DDGS snippet)
-            |
-            v
-    Research summarization / Forecast reasoning
-        nvidia/nemotron-3-ultra-550b-a55b:free
-            -> poolside/laguna-s-2.1:free
-            -> qwen/qwen3.8-27b:free
-        (all three handled inside clients/openrouter_helper.py)
-            |
-            v
+    Metaculus question
+        |
+        +--> deterministic targeted search queries
+        |       +--> original question (always included)
+        |       +--> entity/topic + current-data variants
+        |       +--> resolution-focused variants
+        |
+        v
+    DDGS web research
+        |
+        +--> Trafilatura
+        +--> BeautifulSoup
+        +--> DDGS indexed snippet
+        +--> original search-result snippet
+        |
+        v
+    Forecast/research reasoning
+        +--> Nemotron 3 Ultra :free
+        +--> Laguna S 2.1 :free
+        +--> Qwen3.8 27B :free
+        |
+        v
     forecasting_tools structured parsing
-        nvidia/nemotron-3-ultra-550b-a55b:free
-            -> poolside/laguna-s-2.1:free
-        (handled by FallbackGeneralLlm below, via the "parser" LLM purpose)
-            |
-            v
+        +--> Qwen3.8 27B :free
+        +--> Gemma 4 31B :free
+        |
+        v
     Metaculus
 
-Only the "parser" LLM purpose below is ever invoked by this bot -- forecast
-reasoning and research summarization go through clients/openrouter_helper.py
-directly (see run_research and _run_forecast_on_* below), not through
-forecasting_tools' GeneralLlm plumbing. Previous versions of this file also
-configured "default", "summarizer", and "researcher" purposes that were
-never actually called anywhere; those have been removed to avoid the
-confusion of dead configuration.
+The dedicated parser models are used because the research/reasoning models do
+not reliably advertise native structured-output support on their free
+OpenRouter endpoints.
 """
+
 from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime
+import weakref
+from datetime import datetime, timezone
 from typing import Any
 
 from forecasting_tools import (
     BinaryPrediction,
     BinaryQuestion,
+    ConditionalPrediction,
+    ConditionalQuestion,
+    DateQuestion,
     ForecastBot,
     GeneralLlm,
     MetaculusQuestion,
     MultipleChoiceQuestion,
     NumericDistribution,
     NumericQuestion,
+    DatePercentile,
     Percentile,
     PredictedOptionList,
+    PredictionAffirmed,
+    PredictionTypes,
     ReasonedPrediction,
     clean_indents,
     structure_output,
 )
-
 from clients.openrouter_helper import (
     FALLBACK_MODEL,
     PRIMARY_MODEL,
+    THIRD_MODEL,
     generate_forecast_reasoning,
 )
 from research.pipeline import run_research_pipeline
@@ -73,41 +82,56 @@ logger = logging.getLogger(__name__)
 PRIMARY_LLM = f"openrouter/{PRIMARY_MODEL}"
 FALLBACK_LLM = f"openrouter/{FALLBACK_MODEL}"
 
+# Dedicated parser models: these need reliable native structured-output
+# support, which Nemotron/Laguna do not advertise. Verified live on
+# OpenRouter's free tier -- re-check https://openrouter.ai/models?max_price=0
+# periodically since the free roster rotates.
+PARSER_PRIMARY_LLM = "openrouter/qwen/qwen3.8-27b:free"
+PARSER_FALLBACK_LLM = "openrouter/google/gemma-4-31b-it:free"
+
 # Maximum number of forecasting-tools / LiteLLM calls allowed at once.
 #
-# This is a *separate* pool from the direct OpenRouter semaphore in
-# clients/openrouter_helper.py -- the two do not share state, so total
-# concurrent OpenRouter requests can reach the sum of both limits. Both are
-# kept at 1 so a real run never has more than 2 simultaneous requests
-# against the free endpoints (1 here for parsing, 1 there for research /
-# reasoning), rather than the 4 that two independent limits of 2 each
-# allowed for previously.
-_GENERAL_LLM_CONCURRENCY = 1
-_GENERAL_LLM_SEMAPHORE = asyncio.Semaphore(_GENERAL_LLM_CONCURRENCY)
+# This is separate from the direct OpenRouter semaphore in
+# clients/openrouter_helper.py.
+_GENERAL_LLM_CONCURRENCY = 2
+
+
+class _LoopBoundSemaphore:
+    """Keep a separate semaphore for each asyncio event loop."""
+
+    def __init__(self, value: int) -> None:
+        self._value = value
+        self._semaphores: weakref.WeakKeyDictionary[
+            asyncio.AbstractEventLoop, asyncio.Semaphore
+        ] = weakref.WeakKeyDictionary()
+
+    def _get(self) -> asyncio.Semaphore:
+        loop = asyncio.get_running_loop()
+        semaphore = self._semaphores.get(loop)
+        if semaphore is None:
+            semaphore = asyncio.Semaphore(self._value)
+            self._semaphores[loop] = semaphore
+        return semaphore
+
+    async def __aenter__(self) -> None:
+        await self._get().acquire()
+
+    async def __aexit__(self, *_: object) -> None:
+        self._get().release()
+
+
+_GENERAL_LLM_SEMAPHORE = _LoopBoundSemaphore(_GENERAL_LLM_CONCURRENCY)
 
 
 class FallbackGeneralLlm(GeneralLlm):
-    """
-    GeneralLlm wrapper with explicit primary -> fallback behaviour.
-
-    Primary:
-        Nemotron 3 Ultra
-    Fallback:
-        Laguna S 2.1
-
-    The wrapper deliberately uses allowed_tries=1 on each underlying model.
-    The wrapper itself controls the fallback so that we don't get multiple
-    layers of hidden retries.
-
-    It also shares a semaphore across all instances to prevent a burst of
-    simultaneous requests against free OpenRouter endpoints.
-    """
+    """GeneralLlm wrapper with primary -> fallback -> final fallback."""
 
     def __init__(
         self,
         *,
         primary_model: str,
         fallback_model: str,
+        third_model: str | None,
         temperature: float,
         timeout: float,
     ) -> None:
@@ -117,145 +141,114 @@ class FallbackGeneralLlm(GeneralLlm):
             timeout=timeout,
             allowed_tries=1,
         )
-        self._primary_model_name = primary_model
-        self._fallback_model_name = fallback_model
-        self._fallback_llm = GeneralLlm(
-            model=fallback_model,
-            temperature=temperature,
-            timeout=timeout,
-            allowed_tries=1,
-        )
+        self._models = [primary_model, fallback_model] + ([third_model] if third_model else [])
+        self._fallback_llms = [
+            GeneralLlm(
+                model=fallback_model,
+                temperature=temperature,
+                timeout=timeout,
+                allowed_tries=1,
+            )
+        ]
+        if third_model:
+            self._fallback_llms.append(
+                GeneralLlm(
+                    model=third_model,
+                    temperature=temperature,
+                    timeout=timeout,
+                    allowed_tries=1,
+                )
+            )
 
-    async def invoke(
-        self,
-        prompt: str,
-        *args: Any,
-        **kwargs: Any,
-    ) -> Any:
-        """
-        Try Nemotron once, then Laguna once.
+    async def invoke(self, prompt: str, *args: Any, **kwargs: Any) -> Any:
+        errors: list[tuple[str, Exception]] = []
 
-        The forecasting_tools GeneralLlm itself has allowed_tries=1 so this
-        wrapper is the component responsible for model failover.
-        """
-        primary_error: Exception | None = None
         async with _GENERAL_LLM_SEMAPHORE:
             try:
-                logger.debug(
-                    "Calling primary forecasting LLM: %s",
-                    self._primary_model_name,
-                )
-                return await super().invoke(
-                    prompt,
-                    *args,
-                    **kwargs,
-                )
+                return await super().invoke(prompt, *args, **kwargs)
             except Exception as exc:
-                primary_error = exc
+                errors.append((self._models[0], exc))
                 logger.warning(
-                    "Primary forecasting model failed: %s. "
-                    "Falling back to %s.",
-                    self._primary_model_name,
-                    self._fallback_model_name,
+                    "Primary model failed: %s. Falling back to %s.",
+                    self._models[0], self._models[1],
                 )
+
+            for model, llm in zip(self._models[1:], self._fallback_llms):
                 try:
-                    result = await self._fallback_llm.invoke(
-                        prompt,
-                        *args,
-                        **kwargs,
-                    )
-                    logger.info(
-                        "Fallback forecasting model succeeded: %s",
-                        self._fallback_model_name,
-                    )
+                    result = await llm.invoke(prompt, *args, **kwargs)
+                    logger.info("Fallback model succeeded: %s", model)
                     return result
-                except Exception as fallback_error:
-                    raise RuntimeError(
-                        "Both forecasting LLMs failed.\n"
-                        f"Primary ({self._primary_model_name}): "
-                        f"{primary_error!r}\n"
-                        f"Fallback ({self._fallback_model_name}): "
-                        f"{fallback_error!r}"
-                    ) from fallback_error
+                except Exception as exc:
+                    errors.append((model, exc))
+                    if model != self._models[-1]:
+                        logger.warning(
+                            "Fallback model failed: %s. Falling back to %s.",
+                            model, self._models[self._models.index(model) + 1],
+                        )
+
+        details = "\n".join(f"{model}: {error!r}" for model, error in errors)
+        raise RuntimeError("All configured LLMs failed.\n" + details) from errors[-1][1]
 
 
 class OpenRouterForecastBot(ForecastBot):
     """
     Metaculus forecasting bot.
 
-    Only the "parser" forecasting_tools LLM purpose is configured/used --
-    see the module docstring for why "default"/"summarizer"/"researcher"
-    were removed. This still prevents forecasting_tools from silently
-    falling back to an OpenAI/Anthropic default for structured-output
-    parsing when no key for those providers is set.
+    Every forecasting_tools LLM purpose is explicitly configured so that
+    ForecastBot never silently falls back to its own defaults.
     """
 
-    # Caps how many questions this bot researches/forecasts at once.
-    # Without this, forecasting_tools can start several questions'
-    # research+forecast pipelines concurrently, each queuing multiple LLM
-    # calls behind the small OpenRouter semaphores below -- on a
-    # rate-limited free tier that queuing is the main cause of runs that
-    # look stuck or blow past a CI timeout. Kept at 1: one question,
-    # start to finish, before the next one starts.
-    _max_concurrent_questions = 1
-    _concurrency_limiter = asyncio.Semaphore(_max_concurrent_questions)
-
-    _structure_output_validation_samples = 1
+    _structure_output_validation_samples = 2
 
     def _llm_config_defaults(self) -> dict[str, GeneralLlm]:
-        """
-        Explicitly configure the forecasting_tools LLM purposes this bot
-        actually uses.
-
-        Only "parser" is invoked anywhere in this file (via
-        self._parser_llm(), for structure_output calls). Forecast
-        reasoning and research summarization go through
-        clients/openrouter_helper.py directly and never touch
-        forecasting_tools' LLM-purpose system, so configuring
-        "default"/"summarizer"/"researcher" here would be dead code that
-        misleadingly suggests they're in the request path.
-        """
+        """Configure only the forecasting_tools purpose this bot actually uses."""
         return {
             "parser": FallbackGeneralLlm(
-                primary_model=PRIMARY_LLM,
-                fallback_model=FALLBACK_LLM,
+                primary_model=PARSER_PRIMARY_LLM,
+                fallback_model=PARSER_FALLBACK_LLM,
+                third_model=None,
                 temperature=0.0,
                 timeout=240,
             ),
         }
 
-    ##################################### RESEARCH #####################################
+    # -----------------------------------------------------------------------
+    # RESEARCH
+    # -----------------------------------------------------------------------
 
     async def run_research(
         self,
         question: MetaculusQuestion,
     ) -> str:
-        async with self._concurrency_limiter:
-            logger.info(
-                "Starting research for %s",
-                question.page_url,
-            )
+        logger.info(
+            "Starting research for %s",
+            question.page_url,
+        )
 
-            research = await run_research_pipeline(
-                question_text=question.question_text,
-                resolution_criteria=question.resolution_criteria or "",
-                background=question.background_info or "",
-            )
+        research = await run_research_pipeline(
+            question_text=question.question_text,
+            resolution_criteria=question.resolution_criteria or "",
+            background=question.background_info or "",
+        )
 
-            logger.info(
-                "Research for %s:\n%s",
-                question.page_url,
-                research[:1000],
-            )
-            return research
+        logger.info(
+            "Research for %s:\n%s",
+            question.page_url,
+            research[:1000],
+        )
 
-    ##################################### BINARY #####################################
+        return research
+
+    # -----------------------------------------------------------------------
+    # BINARY
+    # -----------------------------------------------------------------------
 
     async def _run_forecast_on_binary(
         self,
         question: BinaryQuestion,
         research: str,
     ) -> ReasonedPrediction[float]:
+
         prompt = clean_indents(
             f"""
             You are a professional probabilistic forecaster.
@@ -296,13 +289,18 @@ class OpenRouterForecastBot(ForecastBot):
 
             Do not blindly follow the research. Evaluate its quality.
 
+            {self._get_conditional_disclaimer_if_necessary(question)}
+
             The final line MUST be exactly:
+
             Probability: ZZ%
+
             where ZZ is your probability from 0 to 100.
             """
         )
 
         reasoning = await generate_forecast_reasoning(prompt)
+
         logger.info(
             "Forecast reasoning for %s: %s",
             question.page_url,
@@ -315,6 +313,7 @@ class OpenRouterForecastBot(ForecastBot):
             model=self._parser_llm(),
             num_validation_samples=self._structure_output_validation_samples,
         )
+
         decimal_pred = max(
             0.01,
             min(
@@ -328,13 +327,16 @@ class OpenRouterForecastBot(ForecastBot):
             reasoning=reasoning,
         )
 
-    ##################################### MULTIPLE CHOICE #####################################
+    # -----------------------------------------------------------------------
+    # MULTIPLE CHOICE
+    # -----------------------------------------------------------------------
 
     async def _run_forecast_on_multiple_choice(
         self,
         question: MultipleChoiceQuestion,
         research: str,
     ) -> ReasonedPrediction[PredictedOptionList]:
+
         prompt = clean_indents(
             f"""
             You are a professional probabilistic forecaster.
@@ -377,18 +379,23 @@ class OpenRouterForecastBot(ForecastBot):
             Give a probability to EVERY option.
 
             The final answer must contain the options in exactly this order:
+
             {question.options}
 
             Use:
+
             Option_A: Probability_A
             Option_B: Probability_B
             ...
+
+            {self._get_conditional_disclaimer_if_necessary(question)}
 
             Probabilities should sum to approximately 100%.
             """
         )
 
         reasoning = await generate_forecast_reasoning(prompt)
+
         logger.info(
             "Forecast reasoning for %s: %s",
             question.page_url,
@@ -398,6 +405,7 @@ class OpenRouterForecastBot(ForecastBot):
         parsing_instructions = clean_indents(
             f"""
             The valid option names are:
+
             {question.options}
 
             When parsing the answer:
@@ -423,13 +431,16 @@ class OpenRouterForecastBot(ForecastBot):
             reasoning=reasoning,
         )
 
-    ##################################### NUMERIC #####################################
+    # -----------------------------------------------------------------------
+    # NUMERIC
+    # -----------------------------------------------------------------------
 
     async def _run_forecast_on_numeric(
         self,
         question: NumericQuestion,
         research: str,
     ) -> ReasonedPrediction[NumericDistribution]:
+
         upper_bound_message, lower_bound_message = (
             self._create_upper_and_lower_bound_messages(question)
         )
@@ -483,18 +494,23 @@ class OpenRouterForecastBot(ForecastBot):
             - Percentile values must increase monotonically.
             - Do not invent unsupported precision.
 
+            {self._get_conditional_disclaimer_if_necessary(question)}
+
             Your final answer MUST contain exactly:
+
             Percentile 10: XX
             Percentile 20: XX
             Percentile 40: XX
             Percentile 60: XX
             Percentile 80: XX
             Percentile 90: XX
+
             where XX is a numerical value in the requested units.
             """
         )
 
         reasoning = await generate_forecast_reasoning(prompt)
+
         logger.info(
             "Forecast reasoning for %s: %s",
             question.page_url,
@@ -504,6 +520,7 @@ class OpenRouterForecastBot(ForecastBot):
         parsing_instructions = clean_indents(
             f"""
             The numeric question is:
+
             {question.question_text}
 
             Units:
@@ -526,6 +543,7 @@ class OpenRouterForecastBot(ForecastBot):
             additional_instructions=parsing_instructions,
             num_validation_samples=self._structure_output_validation_samples,
         )
+
         prediction = NumericDistribution.from_question(
             percentile_list,
             question,
@@ -536,23 +554,314 @@ class OpenRouterForecastBot(ForecastBot):
             reasoning=reasoning,
         )
 
-    ##################################### HELPERS #####################################
+    # -----------------------------------------------------------------------
+    # DATE
+    # -----------------------------------------------------------------------
+
+    async def _run_forecast_on_date(
+        self,
+        question: DateQuestion,
+        research: str,
+    ) -> ReasonedPrediction[NumericDistribution]:
+
+        upper_bound_message, lower_bound_message = (
+            self._create_upper_and_lower_bound_messages(question)
+        )
+
+        prompt = clean_indents(
+            f"""
+            You are a professional probabilistic forecaster.
+
+            QUESTION:
+            {question.question_text}
+
+            BACKGROUND:
+            {question.background_info}
+
+            RESOLUTION CRITERIA:
+            {question.resolution_criteria}
+
+            FINE PRINT:
+            {question.fine_print}
+
+            RESEARCH:
+            {research}
+
+            TODAY:
+            {datetime.now().strftime("%Y-%m-%d")}
+
+            QUESTION LOWER BOUND:
+            {lower_bound_message}
+
+            QUESTION UPPER BOUND:
+            {upper_bound_message}
+
+            Consider:
+            (a) The time remaining until the outcome is known.
+            (b) The status quo / current trajectory.
+            (c) Historical base rates for similar events.
+            (d) Expert and market expectations where available.
+            (e) A plausible early-outcome scenario.
+            (f) A plausible late-outcome scenario.
+            (g) Unknown unknowns.
+
+            Be appropriately uncertain. Good forecasters usually need wider
+            date ranges than their first instinct suggests.
+
+            Formatting requirements:
+            - Dates must be in ISO format: YYYY-MM-DD.
+            - Percentile dates must increase monotonically
+              (P10 earliest, P90 latest).
+            - Do not invent unsupported precision.
+
+            {self._get_conditional_disclaimer_if_necessary(question)}
+
+            Your final answer MUST contain exactly:
+
+            Percentile 10: YYYY-MM-DD
+            Percentile 20: YYYY-MM-DD
+            Percentile 40: YYYY-MM-DD
+            Percentile 60: YYYY-MM-DD
+            Percentile 80: YYYY-MM-DD
+            Percentile 90: YYYY-MM-DD
+            """
+        )
+
+        reasoning = await generate_forecast_reasoning(prompt)
+
+        logger.info(
+            "Forecast reasoning for %s: %s",
+            question.page_url,
+            reasoning[:1000],
+        )
+
+        parsing_instructions = clean_indents(
+            f"""
+            The question is a DATE question:
+
+            {question.question_text}
+
+            When parsing:
+            - Parse each percentile value as an ISO date (YYYY-MM-DD).
+            - If the target schema requires a numeric value, convert the
+              parsed date to a Unix timestamp (seconds since epoch, UTC).
+            - Only use percentile values explicitly supported by the
+              model's final answer.
+            - Preserve the requested percentile labels.
+            - Do not invent missing percentile values.
+            """
+        )
+
+        date_percentile_list: list[DatePercentile] = await structure_output(
+            reasoning,
+            list[DatePercentile],
+            model=self._parser_llm(),
+            additional_instructions=parsing_instructions,
+            num_validation_samples=self._structure_output_validation_samples,
+        )
+
+        percentile_list = [
+            Percentile(
+                percentile=percentile.percentile,
+                value=(
+                    percentile.value.replace(tzinfo=timezone.utc)
+                    if percentile.value.tzinfo is None
+                    else percentile.value
+                ).timestamp(),
+            )
+            for percentile in date_percentile_list
+        ]
+
+        prediction = NumericDistribution.from_question(
+            percentile_list,
+            question,
+        )
+
+        return ReasonedPrediction(
+            prediction_value=prediction,
+            reasoning=reasoning,
+        )
+
+    # -----------------------------------------------------------------------
+    # CONDITIONAL
+    # -----------------------------------------------------------------------
+
+    async def _run_forecast_on_conditional(
+        self,
+        question: ConditionalQuestion,
+        research: str,
+    ) -> ReasonedPrediction[ConditionalPrediction]:
+        """Forecast the parent/child components using forecasting-tools semantics."""
+        parent_info, full_research = await self._get_question_prediction_info(
+            question.parent, research, "parent"
+        )
+        child_info, full_research = await self._get_question_prediction_info(
+            question.child, full_research, "child"
+        )
+        yes_info, full_research = await self._get_question_prediction_info(
+            question.question_yes, full_research, "yes"
+        )
+        no_info, full_research = await self._get_question_prediction_info(
+            question.question_no, full_research, "no"
+        )
+
+        full_reasoning = clean_indents(
+            f"""
+            ## Parent Question Reasoning
+            {parent_info.reasoning}
+
+            ## Child Question Reasoning
+            {child_info.reasoning}
+
+            ## Child Conditional on Parent = YES
+            {yes_info.reasoning}
+
+            ## Child Conditional on Parent = NO
+            {no_info.reasoning}
+            """
+        )
+
+        full_prediction = ConditionalPrediction(
+            parent=parent_info.prediction_value,  # type: ignore
+            child=child_info.prediction_value,  # type: ignore
+            prediction_yes=yes_info.prediction_value,  # type: ignore
+            prediction_no=no_info.prediction_value,  # type: ignore
+        )
+
+        return ReasonedPrediction(
+            reasoning=full_reasoning,
+            prediction_value=full_prediction,
+        )
+
+    async def _get_question_prediction_info(
+        self,
+        question: MetaculusQuestion,
+        research: str,
+        question_type: str,
+    ) -> tuple[ReasonedPrediction[Any], str]:
+        """Reuse open parent/child forecasts where appropriate."""
+        from forecasting_tools.data_models.data_organizer import DataOrganizer
+
+        previous_forecasts = question.previous_forecasts
+        if (
+            question_type in {"parent", "child"}
+            and previous_forecasts
+            and question_type not in getattr(
+                self, "force_reforecast_in_conditional", set()
+            )
+        ):
+            previous_forecast = previous_forecasts[-1]
+            current_utc_time = datetime.now(timezone.utc)
+            if (
+                previous_forecast.timestamp_end is None
+                or previous_forecast.timestamp_end > current_utc_time
+            ):
+                readable = DataOrganizer.get_readable_prediction(previous_forecast)
+                return (
+                    ReasonedPrediction(
+                        prediction_value=PredictionAffirmed(),
+                        reasoning=(
+                            f"Already existing {question_type} forecast "
+                            f"reaffirmed at {readable}."
+                        ),
+                    ),
+                    research,
+                )
+
+        info = await self._make_prediction(question, research)
+        full_research = self._add_reasoning_to_research(
+            research, info, question_type
+        )
+        return info, full_research
+
+    def _add_reasoning_to_research(
+        self,
+        research: str,
+        reasoning: ReasonedPrediction[Any],
+        question_type: str,
+    ) -> str:
+        from forecasting_tools.data_models.data_organizer import DataOrganizer
+
+        label = question_type.title()
+        return clean_indents(
+            f"""
+            {research}
+
+            ---
+            ## {label} Question Information
+
+            You have previously forecasted the {label} Question to the value: 
+            {DataOrganizer.get_readable_prediction(reasoning.prediction_value)}
+
+            This is relevant information for your current forecast, but it is NOT
+            your current forecast. Do not use this reasoning to re-forecast that
+            component directly.
+
+            Reasoning:
+            {reasoning.reasoning}
+            """
+        )
+
+    def _get_conditional_disclaimer_if_necessary(
+        self,
+        question: MetaculusQuestion,
+    ) -> str:
+        if getattr(question, "conditional_type", None) not in {"yes", "no"}:
+            return ""
+        return clean_indents(
+            """
+            This is a conditional child question. Forecast ONLY the child outcome
+            under the stated parent resolution; do not independently re-forecast
+            the parent inside this component.
+            """
+        )
+
+    # -----------------------------------------------------------------------
+    # HELPERS
+    # -----------------------------------------------------------------------
 
     def _create_upper_and_lower_bound_messages(
         self,
-        question: NumericQuestion,
+        question: NumericQuestion | DateQuestion,
     ) -> tuple[str, str]:
-        upper_bound_number = (
-            question.nominal_upper_bound
-            if question.nominal_upper_bound is not None
-            else question.upper_bound
-        )
-        lower_bound_number = (
-            question.nominal_lower_bound
-            if question.nominal_lower_bound is not None
-            else question.lower_bound
-        )
-        unit_of_measure = question.unit_of_measure
+        """
+        Create human-readable bound messages for numeric and date questions.
+
+        NumericQuestion has nominal_upper_bound / nominal_lower_bound.
+
+        DateQuestion does NOT have those attributes, so its actual
+        upper_bound / lower_bound fields are used directly.
+        """
+
+        if isinstance(question, NumericQuestion):
+            upper_bound_number = (
+                question.nominal_upper_bound
+                if question.nominal_upper_bound is not None
+                else question.upper_bound
+            )
+
+            lower_bound_number = (
+                question.nominal_lower_bound
+                if question.nominal_lower_bound is not None
+                else question.lower_bound
+            )
+
+            unit_of_measure = (
+                question.unit_of_measure
+                if question.unit_of_measure
+                else "units"
+            )
+
+        elif isinstance(question, DateQuestion):
+            upper_bound_number = question.upper_bound.date().isoformat()
+            lower_bound_number = question.lower_bound.date().isoformat()
+            unit_of_measure = "date"
+
+        else:
+            raise TypeError(
+                "Unsupported question type for bound messages: "
+                f"{type(question).__name__}"
+            )
 
         if question.open_upper_bound:
             upper_bound_message = (
@@ -585,6 +894,10 @@ class OpenRouterForecastBot(ForecastBot):
         Return the explicitly configured parser.
 
         The parser itself uses:
-            Nemotron -> Laguna
+            Qwen3.8 27B -> Gemma 4 31B
+
+        These free endpoints advertise structured-output support, unlike the
+        current Nemotron Ultra and Laguna endpoints.
         """
+
         return self.get_llm("parser", "llm")
