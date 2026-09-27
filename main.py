@@ -125,12 +125,17 @@ def run_forecasting(
         )
 
     bot.skip_previously_forecasted_questions = False
-    return asyncio.run(
-        bot.forecast_on_tournament(
-            "bot-testing-area",
-            return_exceptions=True,
-        )
+
+    question = client.get_question_by_url(
+        "https://www.metaculus.com/questions/43322/"
     )
+    
+    return asyncio.run(
+        bot.forecast_questions(
+            [question],
+            return_exceptions=True,
+    )
+)
 
 
 def main() -> None:
