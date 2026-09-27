@@ -1,106 +1,80 @@
-"""Research orchestration for the forecasting bot."""
+"""Research orchestration for the forecasting bot.
+
+Search-query construction is deliberately deterministic. There is no LLM
+query generation, expansion, retry-query generation, or query rewriting here.
+"""
 from __future__ import annotations
 
 import asyncio
 import logging
-import re
-from collections.abc import Iterable
 
 from clients import openrouter_helper
 from research.scraper import web_search
 
 logger = logging.getLogger(__name__)
 
-_STOPWORDS = {
-    "a", "about", "after", "against", "all", "an", "and", "are", "as",
-    "at", "be", "before", "by", "can", "could", "does", "for", "from",
-    "has", "have", "how", "in", "into", "is", "it", "its", "may", "might",
-    "more", "most", "of", "on", "or", "that", "the", "their", "there",
-    "this", "to", "under", "until", "what", "when", "where", "which", "who",
-    "will", "with", "would", "year", "years", "than", "then", "whether",
-}
 
-
-def _clean(value: str) -> str:
-    return re.sub(r"\s+", " ", value or "").strip()
-
-
-def _unique(values: Iterable[str]) -> list[str]:
+def _dedupe_queries(values: list[str]) -> list[str]:
+    """Deduplicate queries case-insensitively while preserving exact text/order."""
     seen: set[str] = set()
-    result: list[str] = []
+    deduped: list[str] = []
     for value in values:
-        value = _clean(value)
+        if not isinstance(value, str) or not value:
+            continue
         key = value.casefold()
-        if value and key not in seen:
-            seen.add(key)
-            result.append(value)
-    return result
-
-
-def _signal_terms(text: str, limit: int = 18) -> list[str]:
-    """Extract useful entity/topic terms without requiring an LLM."""
-    tokens = re.findall(r"[A-Za-z0-9][A-Za-z0-9'./%-]*", text or "")
-    terms: list[str] = []
-    seen: set[str] = set()
-    for token in tokens:
-        lower = token.casefold()
-        if lower in _STOPWORDS or len(lower) < 3:
+        if key in seen:
             continue
-        # Preserve years, percentages, acronyms and proper-looking tokens.
-        if not (len(lower) >= 4 or any(ch.isdigit() for ch in token)):
-            continue
-        if lower not in seen:
-            seen.add(lower)
-            terms.append(token.strip(".,;:!?()[]{}"))
-        if len(terms) >= limit:
-            break
-    return terms
+        seen.add(key)
+        deduped.append(value)
+    return deduped
 
 
 def build_search_queries(
     question_text: str,
     resolution_criteria: str = "",
     background: str = "",
-    max_queries: int = 5,
+    max_queries: int = 3,
     retry: bool = False,
 ) -> list[str]:
-    """Build deterministic, targeted search queries.
+    """Build the fixed deterministic search-query set.
 
-    The exact question is always the first query. Other queries emphasize
-    entities/signals and resolution-specific language instead of simply using
-    the first few words of the question.
+    Rules:
+      1. Query 1 is ``question_text`` verbatim.
+      2. If the question has more than six whitespace-delimited words,
+         Query 2 is the first eight words, after removing a trailing ``?``
+         only for tokenization.
+      3. If the question has more than six words, Query 3 is the first six
+         words followed by ``latest news``.
+
+    ``resolution_criteria``, ``background`` and ``retry`` remain in the
+    signature for compatibility with older callers, but are intentionally not
+    used. There is no LLM or deterministic query expansion beyond the three
+    rules above.
     """
-    question = _clean(question_text)
-    question_terms = _signal_terms(question, 18)
-    criteria_terms = _signal_terms(resolution_criteria, 10)
-    background_terms = _signal_terms(background, 8)
+    del resolution_criteria, background, retry
 
-    queries: list[str] = [question]
-    signal = " ".join(question_terms[:12])
-    criteria_signal = " ".join(criteria_terms[:6])
-    background_signal = " ".join(background_terms[:5])
+    if not isinstance(question_text, str) or not question_text:
+        return []
 
-    if signal:
-        queries.append(f"{signal} latest news")
-        queries.append(f"{signal} official data results")
-    if criteria_signal:
-        queries.append(f"{signal} {criteria_signal} evidence")
-    if background_signal:
-        queries.append(f"{signal} {background_signal} recent developments")
+    # IMPORTANT: query 1 is the exact question text. Do not strip, normalize,
+    # or otherwise modify it.
+    queries = [question_text]
 
-    if retry:
-        if signal:
-            queries.extend(
-                [
-                    f"{signal} current status September 2026",
-                    f"{signal} announcement update outcome",
-                    f"{signal} statistics report filing",
-                ]
-            )
-        if criteria_signal:
-            queries.append(f"{criteria_signal} official source latest")
+    # Only remove a trailing question mark for tokenization. The original
+    # question string above remains untouched.
+    token_source = (
+        question_text[:-1]
+        if question_text.endswith("?")
+        else question_text
+    )
+    words = token_source.split()
 
-    return _unique(queries)[:max_queries]
+    if len(words) > 6:
+        queries.append(" ".join(words[:8]))
+        queries.append(" ".join(words[:6]) + " latest news")
+
+    deduped_queries = _dedupe_queries(queries)
+    return deduped_queries[: max(0, max_queries)]
 
 
 async def _run_search(
@@ -128,6 +102,10 @@ async def _parallel_search(
     results_per_query: int,
     relevance_text: str,
 ) -> str:
+    """Run every deduplicated query concurrently and combine nonempty results."""
+    if not queries:
+        return ""
+
     results = await asyncio.gather(
         *(
             _run_search(
@@ -138,12 +116,18 @@ async def _parallel_search(
             for query in queries
         )
     )
+
     usable = [
-        result
+        result.strip()
         for result in results
-        if result.strip() and result.strip() != "NO_RESEARCH_AVAILABLE"
+        if result and result.strip() and result.strip() != "NO_RESEARCH_AVAILABLE"
     ]
-    return "\n\n=== SEARCH QUERY ===\n\n".join(usable)
+    logger.info(
+        "[RESEARCH] Completed %d/%d searches.",
+        len(usable),
+        len(queries),
+    )
+    return "\n\n===\n\n".join(usable)
 
 
 async def run_research_pipeline(
@@ -152,50 +136,32 @@ async def run_research_pipeline(
     background: str = "",
     fine_print: str = "",
     question_context: str = "",
-    num_queries: int = 5,
+    num_queries: int = 3,
     results_per_query: int = 4,
     summarize: bool = True,
 ) -> str:
-    """Run parallel web research, retrying with alternate deterministic queries."""
-    question = _clean(question_text)
-    if not question:
+    """Run the fixed three-query web-research pipeline exactly once."""
+    if not isinstance(question_text, str) or not question_text:
         return "RESEARCH STATUS: NO_RESEARCH_AVAILABLE"
 
-    first_queries = build_search_queries(
-        question,
-        resolution_criteria,
-        background,
+    queries = build_search_queries(
+        question_text=question_text,
+        resolution_criteria=resolution_criteria,
+        background=background,
         max_queries=num_queries,
     )
-    logger.info("[RESEARCH] Attempt 1 queries: %s", first_queries)
-    raw_research = await _parallel_search(
-        first_queries,
-        results_per_query=results_per_query,
-        relevance_text=question,
-    )
+    logger.info("[RESEARCH] Deterministic queries: %s", queries)
 
-    if not raw_research:
-        retry_queries = build_search_queries(
-            question,
-            resolution_criteria,
-            background,
-            max_queries=num_queries,
-            retry=True,
-        )
-        attempted = {q.casefold() for q in first_queries}
-        retry_queries = [q for q in retry_queries if q.casefold() not in attempted]
-        if retry_queries:
-            logger.info("[RESEARCH] Attempt 2 queries: %s", retry_queries)
-            raw_research = await _parallel_search(
-                retry_queries,
-                results_per_query=results_per_query,
-                relevance_text=question,
-            )
+    raw_research = await _parallel_search(
+        queries,
+        results_per_query=results_per_query,
+        relevance_text=question_text,
+    )
 
     if not raw_research:
         return (
             "RESEARCH STATUS: NO_RESEARCH_AVAILABLE\n\n"
-            "All web-search attempts returned zero usable sources. "
+            "All web searches returned zero usable sources. "
             "Do not treat this as evidence that no information exists."
         )
 
@@ -204,21 +170,21 @@ async def run_research_pipeline(
 
     try:
         summary = await openrouter_helper.summarize_research(
-            question_text=question,
-            resolution_criteria=_clean(resolution_criteria),
-            background=_clean(background),
-            fine_print=_clean(fine_print),
-            question_context=_clean(question_context),
+            question_text=question_text,
+            resolution_criteria=resolution_criteria or "",
+            background=background or "",
+            fine_print=fine_print or "",
+            question_context=question_context or "",
             raw_research=raw_research,
         )
     except Exception as exc:
         logger.warning("[RESEARCH] Research summarisation failed: %s", exc)
         summary = ""
 
-    if not summary.strip():
+    if not summary or not summary.strip():
         summary = (
-            "Research was retrieved, but summarisation failed. The raw research "
-            "is supplied below for the forecaster."
+            "Research was retrieved, but summarisation failed. "
+            "The raw research is supplied below for the forecaster."
         )
 
     return f"{summary}\n\nRAW RESEARCH:\n{raw_research[:30000]}"
