@@ -59,7 +59,7 @@ def validate_openrouter_configuration() -> None:
 
 def create_bot() -> OpenRouterForecastBot:
     return OpenRouterForecastBot(
-        research_reports_per_question=1,
+        research_reports_per_question=2,
         predictions_per_research_report=3,
         use_research_summary_to_forecast=False,
         publish_reports_to_metaculus=True,
