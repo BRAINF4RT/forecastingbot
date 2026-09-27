@@ -87,8 +87,8 @@ FALLBACK_LLM = f"openrouter/{FALLBACK_MODEL}"
 # support, which Nemotron/Laguna do not advertise. Verified live on
 # OpenRouter's free tier -- re-check https://openrouter.ai/models?max_price=0
 # periodically since the free roster rotates.
-PARSER_PRIMARY_LLM = "poolside/laguna-s-2.1:free"
-PARSER_FALLBACK_LLM = "qwen/qwen3.8-27b:free"
+PARSER_PRIMARY_LLM = "openrouter/poolside/laguna-s-2.1:free"
+PARSER_FALLBACK_LLM = "openrouter/qwen/qwen3.8-27b:free"
 # Maximum number of forecasting-tools / LiteLLM calls allowed at once.
 #
 # This is separate from the direct OpenRouter semaphore in
