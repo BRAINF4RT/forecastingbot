@@ -150,6 +150,8 @@ async def run_research_pipeline(
     question_text: str,
     resolution_criteria: str,
     background: str = "",
+    fine_print: str = "",
+    question_context: str = "",
     num_queries: int = 5,
     results_per_query: int = 4,
     summarize: bool = True,
@@ -202,10 +204,12 @@ async def run_research_pipeline(
 
     try:
         summary = await openrouter_helper.summarize_research(
-            question,
-            _clean(resolution_criteria),
-            _clean(background),
-            raw_research,
+            question_text=question,
+            resolution_criteria=_clean(resolution_criteria),
+            background=_clean(background),
+            fine_print=_clean(fine_print),
+            question_context=_clean(question_context),
+            raw_research=raw_research,
         )
     except Exception as exc:
         logger.warning("[RESEARCH] Research summarisation failed: %s", exc)
