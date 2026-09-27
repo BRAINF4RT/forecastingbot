@@ -1,44 +1,3 @@
-"""
-OpenRouter Metaculus Forecast Bot.
-
-LLM architecture:
-    Deterministic web-search query construction
-        |
-        +--> full Metaculus question text
-        +--> first 8 words (for questions longer than 6 words)
-        +--> first 6 words + "latest news"
-        |
-        v
-    Concurrent DDGS web research
-        |
-        v
-    Nemotron 3 Ultra :free
-        |
-        +--> Laguna S 2.1 :free on failure
-        |
-        v
-    Forecast reasoning
-        |
-        +--> Laguna S 2.1 :free on failure
-        |
-        v
-    forecasting_tools structured parsing
-        |
-        +--> Nex-N2.5-Pro :free
-        +--> Nex-N2.5-Mini :free on failure
-        |
-        v
-    Metaculus
-
-NOTE: the structured-parsing step deliberately does NOT reuse the
-Nemotron -> Laguna pair used for research/reasoning. Nemotron 3 Ultra does
-not advertise native `structured_outputs` support on OpenRouter, which was
-causing forecasting_tools' strict JSON extractor to come back empty
-("<<REQUESTED TYPE WAS NOT FOUND IN TEXT>>") often enough to sink whole
-questions. The Nex-N2.5 pair has confirmed native structured-output support
-and is used for parsing only.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -83,12 +42,12 @@ logger = logging.getLogger(__name__)
 PRIMARY_LLM = f"openrouter/{PRIMARY_MODEL}"
 FALLBACK_LLM = f"openrouter/{FALLBACK_MODEL}"
 THIRD_LLM = f"openrouter/{THIRD_MODEL}"
-# Dedicated parser models: these need reliable native structured-output
-# support, which Nemotron/Laguna do not advertise. Verified live on
-# OpenRouter's free tier -- re-check https://openrouter.ai/models?max_price=0
-# periodically since the free roster rotates.
-PARSER_PRIMARY_LLM = "openrouter/poolside/laguna-s-2.1:free"
-PARSER_FALLBACK_LLM = "openrouter/qwen/qwen3.8-27b:free"
+
+# Dedicated parser models. These are explicitly provider-qualified because
+# forecasting_tools uses LiteLLM for structured-output parsing.
+PARSER_PRIMARY_LLM = "nvidia/nemotron-3-super-120b-a12b:free"
+PARSER_FALLBACK_LLM = "nvidia/nemotron-3.5-lightning:free"
+PARSER_THIRD_LLM = "poolside/laguna-xs-2.1:free"
 # Maximum number of forecasting-tools / LiteLLM calls allowed at once.
 #
 # This is separate from the direct OpenRouter semaphore in
