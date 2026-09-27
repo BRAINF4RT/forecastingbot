@@ -203,6 +203,12 @@ class OpenRouterForecastBot(ForecastBot):
     def _llm_config_defaults(self) -> dict[str, GeneralLlm]:
         """Configure only the forecasting_tools purpose this bot actually uses."""
         return {
+            "summarizer": FallbackGeneralLlm(
+                primary_model=PRIMARY_LLM,
+                fallback_model=FALLBACK_LLM,
+                temperature=0.10,
+                timeout=240,
+            ),
             "parser": FallbackGeneralLlm(
                 primary_model=PARSER_PRIMARY_LLM,
                 fallback_model=PARSER_FALLBACK_LLM,
