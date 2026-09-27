@@ -88,6 +88,23 @@ FALLBACK_LLM = f"openrouter/{FALLBACK_MODEL}"
 # periodically since the free roster rotates.
 PARSER_PRIMARY_LLM = "openrouter/qwen/qwen3.8-27b:free"
 PARSER_FALLBACK_LLM = "openrouter/google/gemma-4-31b-it:free"
+# Third parser fallback. Qwen and Gemma share OpenRouter's free rate-limit
+# pool and frequently 429 within the same second, so a model on a different
+# provider is used as a last resort rather than leaving the parser with only
+# two models that fail together.
+PARSER_THIRD_LLM = THIRD_MODEL
+
+# 429s from OpenRouter's shared free pool are transient (seconds, not
+# minutes) but common enough that hitting one on every model in the chain at
+# once is routine, not exceptional. Back off and retry the whole chain this
+# many times before giving up.
+_RATE_LIMIT_MAX_RETRIES = 3
+_RATE_LIMIT_BACKOFF_SECONDS = 8
+
+
+def _is_rate_limit_error(exc: Exception) -> bool:
+    text = str(exc).lower()
+    return "429" in text or "rate-limit" in text or "rate limit" in text
 
 # Maximum number of forecasting-tools / LiteLLM calls allowed at once.
 #
@@ -160,34 +177,75 @@ class FallbackGeneralLlm(GeneralLlm):
                 )
             )
 
-    async def invoke(self, prompt: str, *args: Any, **kwargs: Any) -> Any:
+    async def _try_chain_once(
+        self, prompt: str, *args: Any, **kwargs: Any
+    ) -> tuple[Any, list[tuple[str, Exception]]]:
+        """Try every model in the chain once. Returns (result, errors)."""
         errors: list[tuple[str, Exception]] = []
 
-        async with _GENERAL_LLM_SEMAPHORE:
-            try:
-                return await super().invoke(prompt, *args, **kwargs)
-            except Exception as exc:
-                errors.append((self._models[0], exc))
+        try:
+            return await super().invoke(prompt, *args, **kwargs), errors
+        except Exception as exc:
+            errors.append((self._models[0], exc))
+            if len(self._models) > 1:
                 logger.warning(
                     "Primary model failed: %s. Falling back to %s.",
                     self._models[0], self._models[1],
                 )
 
-            for model, llm in zip(self._models[1:], self._fallback_llms):
-                try:
-                    result = await llm.invoke(prompt, *args, **kwargs)
-                    logger.info("Fallback model succeeded: %s", model)
-                    return result
-                except Exception as exc:
-                    errors.append((model, exc))
-                    if model != self._models[-1]:
-                        logger.warning(
-                            "Fallback model failed: %s. Falling back to %s.",
-                            model, self._models[self._models.index(model) + 1],
-                        )
+        for model, llm in zip(self._models[1:], self._fallback_llms):
+            try:
+                result = await llm.invoke(prompt, *args, **kwargs)
+                logger.info("Fallback model succeeded: %s", model)
+                return result, errors
+            except Exception as exc:
+                errors.append((model, exc))
+                if model != self._models[-1]:
+                    next_model = self._models[self._models.index(model) + 1]
+                    logger.warning(
+                        "Fallback model failed: %s. Falling back to %s.",
+                        model, next_model,
+                    )
 
-        details = "\n".join(f"{model}: {error!r}" for model, error in errors)
-        raise RuntimeError("All configured LLMs failed.\n" + details) from errors[-1][1]
+        return None, errors
+
+    async def invoke(self, prompt: str, *args: Any, **kwargs: Any) -> Any:
+        all_errors: list[tuple[str, Exception]] = []
+
+        async with _GENERAL_LLM_SEMAPHORE:
+            for attempt in range(1, _RATE_LIMIT_MAX_RETRIES + 1):
+                result, errors = await self._try_chain_once(
+                    prompt, *args, **kwargs
+                )
+                all_errors.extend(errors)
+
+                if result is not None:
+                    return result
+
+                # Every model in the chain failed this round. If they all
+                # failed specifically due to rate limiting (as opposed to a
+                # real error), it's worth backing off and retrying the whole
+                # chain -- free-tier 429s are typically transient.
+                all_rate_limited = bool(errors) and all(
+                    _is_rate_limit_error(exc) for _, exc in errors
+                )
+                if all_rate_limited and attempt < _RATE_LIMIT_MAX_RETRIES:
+                    wait = _RATE_LIMIT_BACKOFF_SECONDS * attempt
+                    logger.warning(
+                        "All %d models rate-limited (attempt %d/%d). "
+                        "Backing off %ds before retrying the whole chain.",
+                        len(self._models), attempt,
+                        _RATE_LIMIT_MAX_RETRIES, wait,
+                    )
+                    await asyncio.sleep(wait)
+                    continue
+
+                break
+
+        details = "\n".join(f"{model}: {error!r}" for model, error in all_errors)
+        raise RuntimeError("All configured LLMs failed.\n" + details) from (
+            all_errors[-1][1] if all_errors else RuntimeError("no models configured")
+        )
 
 
 class OpenRouterForecastBot(ForecastBot):
@@ -198,7 +256,10 @@ class OpenRouterForecastBot(ForecastBot):
     ForecastBot never silently falls back to its own defaults.
     """
 
-    _structure_output_validation_samples = 2
+    # Each validation sample is a full extra parser call. With the parser
+    # models sharing OpenRouter's free rate-limit pool, keeping this at 1
+    # substantially cuts how often the chain gets rate-limited.
+    _structure_output_validation_samples = 1
 
     def _llm_config_defaults(self) -> dict[str, GeneralLlm]:
         """Configure only the forecasting_tools purpose this bot actually uses."""
@@ -213,7 +274,7 @@ class OpenRouterForecastBot(ForecastBot):
             "parser": FallbackGeneralLlm(
                 primary_model=PARSER_PRIMARY_LLM,
                 fallback_model=PARSER_FALLBACK_LLM,
-                third_model=None,
+                third_model=PARSER_THIRD_LLM,
                 temperature=0.0,
                 timeout=240,
             ),
