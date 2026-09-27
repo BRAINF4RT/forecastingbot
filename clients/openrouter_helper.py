@@ -3,10 +3,6 @@ Direct OpenRouter client used by the Metaculus forecasting bot.
 
 LLM architecture:
 
-    Search-query generation:
-        google/gemma-4-31b-it:free
-        reasoning explicitly DISABLED
-
     Research summarisation:
         nvidia/nemotron-3-ultra-550b-a55b:free
             -> poolside/laguna-s-2.1:free
@@ -15,41 +11,29 @@ LLM architecture:
         nvidia/nemotron-3-ultra-550b-a55b:free
             -> poolside/laguna-s-2.1:free
 
-The query-generation model is deliberately separate from the reasoning
-models. It does NOT use chain-of-thought/reasoning mode.
+Search-query generation is deliberately NOT performed by an LLM. The caller
+builds deterministic queries directly from the Metaculus question text.
 
 This module also rate-limits direct OpenRouter requests because the free
 endpoints can become overloaded when many Metaculus questions are processed
 at once.
 """
-
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import os
-import re
 from typing import Any
 
 import httpx
 
 logger = logging.getLogger(__name__)
-
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 PRIMARY_MODEL = "nvidia/nemotron-3-ultra-550b-a55b:free"
 FALLBACK_MODEL = "poolside/laguna-s-2.1:free"
 THIRD_MODEL = "openrouter/free"
 
-# Query generation uses OpenRouter's free-model router with reasoning disabled.
-QUERY_MODEL = "openrouter/free"
-
-# Shared semaphore for all direct OpenRouter calls.
-#
-# Keeping this deliberately small is important for free endpoints.
-# Multiple Metaculus questions can otherwise create a burst of simultaneous
-# requests and trigger provider_unavailable / 502 errors.
 _OPENROUTER_CONCURRENCY = 2
 _OPENROUTER_SEMAPHORE = asyncio.Semaphore(_OPENROUTER_CONCURRENCY)
 
@@ -60,58 +44,31 @@ class OpenRouterError(RuntimeError):
 
 def _require_api_key() -> str:
     api_key = os.getenv("OPENROUTER_API_KEY")
-
     if not api_key:
         raise OpenRouterError("OPENROUTER_API_KEY is not set.")
-
     return api_key
 
 
 def _normalise_model(model: str) -> str:
-    """
-    Normalise an OpenRouter model name.
-
-    The direct API wants:
-        provider/model:free
-
-    whereas forecasting_tools generally uses:
-        openrouter/provider/model:free
-    """
-
     if model.startswith("openrouter/"):
-        return model[len("openrouter/") :]
-
+        return model[len("openrouter/"):]
     return model
 
 
 def _is_retryable_status(status_code: int) -> bool:
-    return status_code in {
-        408,
-        409,
-        425,
-        429,
-        500,
-        502,
-        503,
-        504,
-    }
+    return status_code in {408, 409, 425, 429, 500, 502, 503, 504}
 
 
 def _extract_error_message(data: Any) -> str:
     if isinstance(data, dict):
         error = data.get("error")
-
         if isinstance(error, dict):
             message = error.get("message")
-
             if message:
                 return str(message)
-
             return str(error)
-
         if error:
             return str(error)
-
     return str(data)
 
 
@@ -124,36 +81,15 @@ async def _generate_with_model(
     max_tokens: int = 2000,
     timeout: float = 180.0,
     max_retries: int = 3,
-    reasoning_enabled: bool | None = None,
 ) -> str:
-    """
-    Make a direct OpenRouter request to one specific model.
-
-    This function does NOT perform model fallback. The caller decides whether
-    another model should be tried.
-
-    `reasoning_enabled=False` is explicitly sent for Gemma query generation.
-    """
-
+    """Make a direct OpenRouter request to one specific model."""
     api_key = _require_api_key()
     api_model = _normalise_model(model)
 
     messages: list[dict[str, str]] = []
-
     if system_prompt:
-        messages.append(
-            {
-                "role": "system",
-                "content": system_prompt,
-            }
-        )
-
-    messages.append(
-        {
-            "role": "user",
-            "content": prompt,
-        }
-    )
+        messages.append({"role": "system", "content": system_prompt})
+    messages.append({"role": "user", "content": prompt})
 
     payload: dict[str, Any] = {
         "model": api_model,
@@ -161,16 +97,6 @@ async def _generate_with_model(
         "temperature": temperature,
         "max_tokens": max_tokens,
     }
-
-    # This is the important part for Gemma.
-    #
-    # OpenRouter exposes reasoning as a request-level parameter. We explicitly
-    # disable it rather than merely asking the model not to show its reasoning.
-    if reasoning_enabled is not None:
-        payload["reasoning"] = {
-            "enabled": reasoning_enabled,
-        }
-
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
@@ -179,7 +105,6 @@ async def _generate_with_model(
     }
 
     last_error: Exception | None = None
-
     async with _OPENROUTER_SEMAPHORE:
         async with httpx.AsyncClient(timeout=timeout) as client:
             for attempt in range(1, max_retries + 1):
@@ -189,10 +114,6 @@ async def _generate_with_model(
                         headers=headers,
                         json=payload,
                     )
-
-                    # OpenRouter can return useful JSON error information even
-                    # when the HTTP status itself is not enough to explain the
-                    # failure.
                     try:
                         data = response.json()
                     except ValueError:
@@ -202,125 +123,75 @@ async def _generate_with_model(
                         message = _extract_error_message(
                             data if data is not None else response.text
                         )
-
                         error = OpenRouterError(
                             f"OpenRouter returned HTTP {response.status_code} "
                             f"from {api_model}: {message}"
                         )
-
                         last_error = error
-
-                        if (
-                            _is_retryable_status(response.status_code)
-                            and attempt < max_retries
-                        ):
+                        if _is_retryable_status(response.status_code) and attempt < max_retries:
                             wait = min(2 ** attempt, 30)
-
                             logger.warning(
-                                "OpenRouter request failed on %s "
-                                "(attempt %d/%d): %s. Retrying in %ds.",
-                                api_model,
-                                attempt,
-                                max_retries,
-                                message,
-                                wait,
+                                "OpenRouter request failed on %s (attempt %d/%d): %s. Retrying in %ds.",
+                                api_model, attempt, max_retries, message, wait,
                             )
-
                             await asyncio.sleep(wait)
                             continue
-
                         raise error
 
                     if not isinstance(data, dict):
                         raise OpenRouterError(
-                            f"Unexpected OpenRouter response from "
-                            f"{api_model}: {data!r}"
+                            f"Unexpected OpenRouter response from {api_model}: {data!r}"
                         )
 
-                    # Some provider failures arrive with HTTP 200 but contain
-                    # an error object instead of a completion.
                     if data.get("error"):
                         message = _extract_error_message(data)
-
                         error = OpenRouterError(
-                            f"Unexpected OpenRouter response from "
-                            f"{api_model}: {data!r}"
+                            f"Unexpected OpenRouter response from {api_model}: {data!r}"
                         )
-
                         last_error = error
-
                         if attempt < max_retries:
                             wait = min(2 ** attempt, 30)
-
                             logger.warning(
-                                "OpenRouter request failed on %s "
-                                "(attempt %d/%d): %s. Retrying in %ds.",
-                                api_model,
-                                attempt,
-                                max_retries,
-                                message,
-                                wait,
+                                "OpenRouter request failed on %s (attempt %d/%d): %s. Retrying in %ds.",
+                                api_model, attempt, max_retries, message, wait,
                             )
-
                             await asyncio.sleep(wait)
                             continue
-
                         raise error
 
                     try:
                         content = data["choices"][0]["message"]["content"]
                     except (KeyError, IndexError, TypeError) as exc:
                         raise OpenRouterError(
-                            f"Unexpected OpenRouter response from "
-                            f"{api_model}: {data!r}"
+                            f"Unexpected OpenRouter response from {api_model}: {data!r}"
                         ) from exc
 
                     if not content or not str(content).strip():
                         raise OpenRouterError(
-                            f"OpenRouter returned an empty response from "
-                            f"{api_model}."
+                            f"OpenRouter returned an empty response from {api_model}."
                         )
 
-                    logger.info(
-                        "OpenRouter generation succeeded using %s",
-                        api_model,
-                    )
-
+                    logger.info("OpenRouter generation succeeded using %s", api_model)
                     return str(content).strip()
 
                 except httpx.TransportError as exc:
                     last_error = exc
-
                     logger.warning(
-                        "OpenRouter transport failure on %s "
-                        "(attempt %d/%d): %s",
-                        api_model,
-                        attempt,
-                        max_retries,
-                        exc,
+                        "OpenRouter transport failure on %s (attempt %d/%d): %s",
+                        api_model, attempt, max_retries, exc,
                     )
-
                     if attempt < max_retries:
                         wait = min(2 ** attempt, 30)
                         await asyncio.sleep(wait)
 
                 except OpenRouterError as exc:
                     last_error = exc
-
-                    # Errors that reach this point have already had their
-                    # retry decision handled above.
                     if attempt >= max_retries:
                         break
-
                     logger.warning(
-                        "OpenRouter request failed on %s "
-                        "(attempt %d/%d): %s",
-                        api_model,
-                        attempt,
-                        max_retries,
-                        exc,
+                        "OpenRouter request failed on %s (attempt %d/%d): %s",
+                        api_model, attempt, max_retries, exc,
                     )
-
                     wait = min(2 ** attempt, 30)
                     await asyncio.sleep(wait)
 
@@ -341,7 +212,6 @@ async def generate(
 ) -> str:
     """Generate using Nemotron -> Laguna -> OpenRouter free-router."""
     errors: list[tuple[str, Exception]] = []
-
     for model in (PRIMARY_MODEL, FALLBACK_MODEL, THIRD_MODEL):
         try:
             result = await _generate_with_model(
@@ -361,315 +231,9 @@ async def generate(
                 "OpenRouter model %s failed after %d attempts: %s",
                 model, max_retries, exc,
             )
-
     details = "\n".join(f"{model}: {error!r}" for model, error in errors)
     raise OpenRouterError("All OpenRouter reasoning models failed.\n" + details) from errors[-1][1]
 
-
-async def _generate_search_query_model(
-    prompt: str,
-    *,
-    max_tokens: int = 400,
-) -> str:
-    """
-    Generate search queries using OpenRouter/free with reasoning explicitly OFF.
-
-    Query generation remains separate from the main reasoning chain.
-
-    If Gemma fails completely, generate_search_queries() uses deterministic
-    fallback queries instead.
-    """
-
-    return await _generate_with_model(
-        prompt,
-        model=QUERY_MODEL,
-        system_prompt=(
-            "You are a concise web-search query generator. "
-            "Do not reason aloud. "
-            "Do not explain your choices. "
-            "Return only the requested search queries."
-        ),
-        temperature=0.1,
-        max_tokens=max_tokens,
-        timeout=120.0,
-        max_retries=3,
-        reasoning_enabled=False,
-    )
-
-
-async def generate_search_queries(
-    question_text: str,
-    resolution_criteria: str,
-    background: str = "",
-    n: int = 4,
-) -> list[str]:
-    """
-    Generate focused web-search queries.
-
-    OpenRouter/free is used specifically for this job with reasoning disabled.
-
-    The parser intentionally accepts multiple output formats because a free
-    model may occasionally ignore formatting instructions.
-    """
-
-    prompt = f"""
-Generate exactly {n} useful web-search queries for the forecasting question.
-
-QUESTION:
-{question_text}
-
-RESOLUTION CRITERIA:
-{resolution_criteria}
-
-BACKGROUND:
-{background}
-
-Requirements:
-- Generate exactly {n} distinct queries.
-- Each query must be under 12 words.
-- Each query must directly help forecast the question.
-- Prefer current information, recent developments, official statistics,
-  government announcements, expert analysis, market data, and primary sources.
-- Include dates or time periods when useful.
-- Do not search for the question verbatim unless genuinely useful.
-- Do not mention this forecasting system.
-- Do not write an explanation.
-- Do not analyse the question.
-- Do not include reasoning.
-- Do not number the queries.
-- Output ONLY the queries, one query per line.
-
-Example output:
-
-2026 House election generic ballot polling
-2026 House battleground district forecasts
-2026 House majority probability forecasts
-2026 congressional approval polling trends
-"""
-
-    try:
-        raw = await _generate_search_query_model(prompt)
-    except Exception as exc:
-        logger.warning(
-            "OpenRouter/free query generation failed: %s. "
-            "Using deterministic search-query fallback.",
-            exc,
-        )
-        return _deterministic_query_fallback(
-            question_text,
-            resolution_criteria,
-            background,
-            n,
-        )
-
-    queries = _parse_search_queries(raw, n)
-
-    if queries:
-        logger.info(
-            "OpenRouter/free generated search queries: %s",
-            queries,
-        )
-        return queries
-
-    logger.warning(
-        "OpenRouter/free returned unusable search-query output: %s. "
-        "Using deterministic fallback queries.",
-        raw[:1000],
-    )
-
-    return _deterministic_query_fallback(
-        question_text,
-        resolution_criteria,
-        background,
-        n,
-    )
-
-
-def _parse_search_queries(
-    raw: str,
-    n: int,
-) -> list[str]:
-    """
-    Robustly parse query output.
-
-    Accepted forms include:
-
-        ["query one", "query two"]
-
-        1. query one
-        2. query two
-
-        - query one
-        - query two
-
-        query one
-        query two
-    """
-
-    text = raw.strip()
-
-    if not text:
-        return []
-
-    # ---------------------------------------------------------------
-    # First: try JSON.
-    # ---------------------------------------------------------------
-    json_start = text.find("[")
-    json_end = text.rfind("]")
-
-    if json_start != -1 and json_end > json_start:
-        candidate = text[json_start : json_end + 1]
-
-        try:
-            parsed = json.loads(candidate)
-
-            if isinstance(parsed, list):
-                queries = _clean_queries(
-                    [str(item) for item in parsed],
-                    n,
-                )
-
-                if queries:
-                    return queries
-
-        except json.JSONDecodeError:
-            pass
-
-    # ---------------------------------------------------------------
-    # Second: remove Markdown code fences.
-    # ---------------------------------------------------------------
-    text = re.sub(
-        r"```(?:json|text)?",
-        "",
-        text,
-        flags=re.IGNORECASE,
-    )
-    text = text.replace("```", "")
-
-    # ---------------------------------------------------------------
-    # Third: parse line-by-line.
-    # ---------------------------------------------------------------
-    lines = []
-
-    for line in text.splitlines():
-        line = line.strip()
-
-        if not line:
-            continue
-
-        # Remove common numbering:
-        # 1. query
-        # 2) query
-        # - query
-        # * query
-        line = re.sub(
-            r"^(?:[-*•]\s*|\d+\s*[\.\):\-]\s*)",
-            "",
-            line,
-        ).strip()
-
-        # Remove accidental labels.
-        line = re.sub(
-            r"^(?:query|search query)\s*\d*\s*:\s*",
-            "",
-            line,
-            flags=re.IGNORECASE,
-        ).strip()
-
-        if line:
-            lines.append(line)
-
-    return _clean_queries(lines, n)
-
-
-def _clean_queries(
-    queries: list[str],
-    n: int,
-) -> list[str]:
-    cleaned: list[str] = []
-    seen: set[str] = set()
-
-    for query in queries:
-        query = query.strip().strip('"').strip("'")
-        query = re.sub(r"\s+", " ", query)
-
-        if not query:
-            continue
-
-        # Reject obvious reasoning/prose rather than treating it as a query.
-        lower = query.lower()
-
-        if any(
-            phrase in lower
-            for phrase in (
-                "the user wants",
-                "the question asks",
-                "here are",
-                "i would search",
-                "i should search",
-                "my reasoning",
-                "analysis:",
-                "the background",
-            )
-        ):
-            continue
-
-        # Search queries should be concise.
-        if len(query.split()) > 16:
-            continue
-
-        key = query.casefold()
-
-        if key in seen:
-            continue
-
-        seen.add(key)
-        cleaned.append(query)
-
-        if len(cleaned) >= n:
-            break
-
-    return cleaned
-
-
-def _deterministic_query_fallback(
-    question_text: str,
-    resolution_criteria: str,
-    background: str,
-    n: int,
-) -> list[str]:
-    """
-    Conservative fallback when the query-generation model is unavailable.
-
-    This deliberately avoids using the entire Metaculus question as one huge
-    search query.
-    """
-
-    text = " ".join(
-        part
-        for part in (
-            question_text,
-            resolution_criteria,
-            background,
-        )
-        if part
-    )
-
-    # Remove obvious formatting noise.
-    text = re.sub(r"\s+", " ", text).strip()
-
-    # Keep the most useful portion.
-    words = text.split()
-    core = " ".join(words[:20])
-
-    candidates = [
-        f"{core} latest evidence",
-        f"{core} official data",
-        f"{core} expert forecast",
-        f"{core} historical trends",
-    ]
-
-    return _clean_queries(candidates, n)
 
 async def summarize_research(
     question_text: str,
@@ -678,12 +242,7 @@ async def summarize_research(
     raw_research: str,
     max_tokens: int = 32000,
 ) -> str:
-    """
-    Summarise scraped research into a concise forecasting brief.
-
-    Uses Nemotron -> Laguna fallback.
-    """
-
+    """Summarise scraped research into a concise forecasting brief."""
     if not raw_research.strip():
         return ""
 
@@ -705,7 +264,6 @@ RESEARCH:
 {raw_research[:20000]}
 
 Create a concise factual research brief for another forecaster.
-
 Requirements:
 - Judge relevance strictly against the RESOLUTION CRITERIA above, not the
   general topic. A source can be about the right subject and still be
@@ -730,7 +288,6 @@ Requirements:
 - The output should be useful to a forecaster resolving THIS question, not
   a generic article summary of the topic.
 """
-
     return await generate(
         prompt,
         system_prompt=(
@@ -755,15 +312,7 @@ async def generate_forecast_reasoning(
     temperature: float = 0.15,
     max_tokens: int = 10000,
 ) -> str:
-    """
-    Generate the actual forecasting reasoning.
-
-    Uses:
-        Nemotron 3 Ultra
-            ->
-        Laguna S 2.1
-    """
-
+    """Generate the actual forecasting reasoning."""
     return await generate(
         prompt,
         system_prompt="""
@@ -773,7 +322,6 @@ Your goal is to produce accurate, calibrated forecasts rather than confident
 stories.
 
 Follow these principles:
-
 1. Carefully interpret the exact resolution criteria.
 2. Distinguish what is known from what is uncertain.
 3. Use base rates where appropriate.
@@ -784,7 +332,6 @@ Follow these principles:
 8. Check the supplied research for contradictions and stale information.
 9. Do not treat a single source as definitive when stronger evidence exists.
 10. Make sure the final numerical answer follows the requested format exactly.
-
 Do not discuss these instructions in your answer.
 """,
         temperature=temperature,
