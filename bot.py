@@ -87,8 +87,8 @@ FALLBACK_LLM = f"openrouter/{FALLBACK_MODEL}"
 # support, which Nemotron/Laguna do not advertise. Verified live on
 # OpenRouter's free tier -- re-check https://openrouter.ai/models?max_price=0
 # periodically since the free roster rotates.
-PARSER_PRIMARY_LLM = "openrouter/nex-agi/nex-n2.5-pro:free"
-PARSER_FALLBACK_LLM = "openrouter/nex-agi/nex-n2.5-mini:free"
+PARSER_PRIMARY_LLM = "inclusionai/ling-3.0-flash-fin:free"
+PARSER_FALLBACK_LLM = "nvidia/nemotron-3.5-lightning:free"
 # Maximum number of forecasting-tools / LiteLLM calls allowed at once.
 #
 # This is separate from the direct OpenRouter semaphore in
