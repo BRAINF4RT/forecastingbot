@@ -36,7 +36,7 @@ def validate_openrouter_configuration() -> None:
     actual = {
         "primary": PRIMARY_LLM.removeprefix("openrouter/"),
         "fallback": FALLBACK_LLM.removeprefix("openrouter/"),
-        "third fallback": THIRD_MODEL.removeprefix("openrouter/"),
+        "third fallback": THIRD_MODEL,
         "query generator": QUERY_MODEL,
     }
     expected = {
