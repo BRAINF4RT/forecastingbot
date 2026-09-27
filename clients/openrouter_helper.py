@@ -128,15 +128,15 @@ async def _generate_with_model(
                             f"from {api_model}: {message}"
                         )
                         last_error = error
-                        if _is_retryable_status(response.status_code) and attempt < max_retries:
-                            wait = min(2 ** attempt, 30)
-                            logger.warning(
-                                "OpenRouter request failed on %s (attempt %d/%d): %s. Retrying in %ds.",
-                                api_model, attempt, max_retries, message, wait,
-                            )
-                            await asyncio.sleep(wait)
-                            continue
-                        raise error
+                        if not _is_retryable_status(response.status_code) or attempt >= max_retries:
+                            raise error
+                        wait = min(2 ** attempt, 30)
+                        logger.warning(
+                            "OpenRouter request failed on %s (attempt %d/%d): %s. Retrying in %ds.",
+                            api_model, attempt, max_retries, message, wait,
+                        )
+                        await asyncio.sleep(wait)
+                        continue
 
                     if not isinstance(data, dict):
                         raise OpenRouterError(
@@ -149,15 +149,15 @@ async def _generate_with_model(
                             f"Unexpected OpenRouter response from {api_model}: {data!r}"
                         )
                         last_error = error
-                        if attempt < max_retries:
-                            wait = min(2 ** attempt, 30)
-                            logger.warning(
-                                "OpenRouter request failed on %s (attempt %d/%d): %s. Retrying in %ds.",
-                                api_model, attempt, max_retries, message, wait,
-                            )
-                            await asyncio.sleep(wait)
-                            continue
-                        raise error
+                        if attempt >= max_retries:
+                            raise error
+                        wait = min(2 ** attempt, 30)
+                        logger.warning(
+                            "OpenRouter request failed on %s (attempt %d/%d): %s. Retrying in %ds.",
+                            api_model, attempt, max_retries, message, wait,
+                        )
+                        await asyncio.sleep(wait)
+                        continue
 
                     try:
                         content = data["choices"][0]["message"]["content"]
@@ -183,17 +183,6 @@ async def _generate_with_model(
                     if attempt < max_retries:
                         wait = min(2 ** attempt, 30)
                         await asyncio.sleep(wait)
-
-                except OpenRouterError as exc:
-                    last_error = exc
-                    if attempt >= max_retries:
-                        break
-                    logger.warning(
-                        "OpenRouter request failed on %s (attempt %d/%d): %s",
-                        api_model, attempt, max_retries, exc,
-                    )
-                    wait = min(2 ** attempt, 30)
-                    await asyncio.sleep(wait)
 
     raise OpenRouterError(
         f"OpenRouter request failed on {api_model} after "
