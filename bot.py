@@ -27,6 +27,7 @@ LLM architecture:
     forecasting_tools structured parsing
         +--> Qwen3.8 27B :free
         +--> Gemma 4 31B :free
+        +--> Nemotron 3 Ultra :free
         |
         v
     Metaculus
@@ -82,35 +83,21 @@ logger = logging.getLogger(__name__)
 PRIMARY_LLM = f"openrouter/{PRIMARY_MODEL}"
 FALLBACK_LLM = f"openrouter/{FALLBACK_MODEL}"
 
-# Dedicated parser models: these need reliable native structured-output
-# support, which Nemotron/Laguna do not advertise. Verified live on
-# OpenRouter's free tier -- re-check https://openrouter.ai/models?max_price=0
-# periodically since the free roster rotates.
+# Preferred parser models. Qwen and Gemma are tried first because they are
+# intended for structured extraction. Nemotron is a final cross-provider
+# fallback so a temporary shared free-tier 429 does not kill a forecast.
 PARSER_PRIMARY_LLM = "openrouter/qwen/qwen3.8-27b:free"
 PARSER_FALLBACK_LLM = "openrouter/google/gemma-4-31b-it:free"
-# Third parser fallback. Qwen and Gemma share OpenRouter's free rate-limit
-# pool and frequently 429 within the same second, so a model on a different
-# provider is used as a last resort rather than leaving the parser with only
-# two models that fail together.
-PARSER_THIRD_LLM = THIRD_MODEL
-
-# 429s from OpenRouter's shared free pool are transient (seconds, not
-# minutes) but common enough that hitting one on every model in the chain at
-# once is routine, not exceptional. Back off and retry the whole chain this
-# many times before giving up.
-_RATE_LIMIT_MAX_RETRIES = 3
-_RATE_LIMIT_BACKOFF_SECONDS = 8
-
-
-def _is_rate_limit_error(exc: Exception) -> bool:
-    text = str(exc).lower()
-    return "429" in text or "rate-limit" in text or "rate limit" in text
+PARSER_THIRD_LLM = PRIMARY_LLM
 
 # Maximum number of forecasting-tools / LiteLLM calls allowed at once.
-#
-# This is separate from the direct OpenRouter semaphore in
-# clients/openrouter_helper.py.
-_GENERAL_LLM_CONCURRENCY = 2
+# Keeping this at one avoids simultaneous requests consuming the same free
+# provider pool and makes parser fallback deterministic.
+_GENERAL_LLM_CONCURRENCY = 1
+
+# Backoff used when every parser model in one chain attempt is rate-limited.
+_RATE_LIMIT_MAX_RETRIES = 3
+_RATE_LIMIT_BACKOFF_SECONDS = 8
 
 
 class _LoopBoundSemaphore:
@@ -140,6 +127,19 @@ class _LoopBoundSemaphore:
 _GENERAL_LLM_SEMAPHORE = _LoopBoundSemaphore(_GENERAL_LLM_CONCURRENCY)
 
 
+def _is_rate_limit_error(exc: Exception) -> bool:
+    """Return True for LiteLLM/OpenRouter rate-limit failures."""
+    name = type(exc).__name__.lower()
+    text = str(exc).lower()
+    return (
+        "ratelimit" in name
+        or "rate limit" in text
+        or "rate-limited" in text
+        or "429" in text
+        or "temporarily rate" in text
+    )
+
+
 class FallbackGeneralLlm(GeneralLlm):
     """GeneralLlm wrapper with primary -> fallback -> final fallback."""
 
@@ -148,7 +148,7 @@ class FallbackGeneralLlm(GeneralLlm):
         *,
         primary_model: str,
         fallback_model: str,
-        third_model: str | None = None,
+        third_model: str | None,
         temperature: float,
         timeout: float,
     ) -> None:
@@ -158,7 +158,9 @@ class FallbackGeneralLlm(GeneralLlm):
             timeout=timeout,
             allowed_tries=1,
         )
-        self._models = [primary_model, fallback_model] + ([third_model] if third_model else [])
+        self._models = [primary_model, fallback_model] + (
+            [third_model] if third_model else []
+        )
         self._fallback_llms = [
             GeneralLlm(
                 model=fallback_model,
@@ -167,6 +169,7 @@ class FallbackGeneralLlm(GeneralLlm):
                 allowed_tries=1,
             )
         ]
+
         if third_model:
             self._fallback_llms.append(
                 GeneralLlm(
@@ -177,74 +180,75 @@ class FallbackGeneralLlm(GeneralLlm):
                 )
             )
 
-    async def _try_chain_once(
-        self, prompt: str, *args: Any, **kwargs: Any
-    ) -> tuple[Any, list[tuple[str, Exception]]]:
-        """Try every model in the chain once. Returns (result, errors)."""
-        errors: list[tuple[str, Exception]] = []
-
-        try:
-            return await super().invoke(prompt, *args, **kwargs), errors
-        except Exception as exc:
-            errors.append((self._models[0], exc))
-            if len(self._models) > 1:
-                logger.warning(
-                    "Primary model failed: %s. Falling back to %s.",
-                    self._models[0], self._models[1],
-                )
-
-        for model, llm in zip(self._models[1:], self._fallback_llms):
-            try:
-                result = await llm.invoke(prompt, *args, **kwargs)
-                logger.info("Fallback model succeeded: %s", model)
-                return result, errors
-            except Exception as exc:
-                errors.append((model, exc))
-                if model != self._models[-1]:
-                    next_model = self._models[self._models.index(model) + 1]
-                    logger.warning(
-                        "Fallback model failed: %s. Falling back to %s.",
-                        model, next_model,
-                    )
-
-        return None, errors
-
     async def invoke(self, prompt: str, *args: Any, **kwargs: Any) -> Any:
+        """Try the configured chain, retrying the whole chain after all-model 429s."""
         all_errors: list[tuple[str, Exception]] = []
 
         async with _GENERAL_LLM_SEMAPHORE:
             for attempt in range(1, _RATE_LIMIT_MAX_RETRIES + 1):
-                result, errors = await self._try_chain_once(
-                    prompt, *args, **kwargs
-                )
+                errors: list[tuple[str, Exception]] = []
+
+                try:
+                    return await super().invoke(prompt, *args, **kwargs)
+                except Exception as exc:
+                    errors.append((self._models[0], exc))
+                    logger.warning(
+                        "Primary model failed: %s. Falling back to %s.",
+                        self._models[0],
+                        self._models[1],
+                    )
+
+                for index, (model, llm) in enumerate(
+                    zip(self._models[1:], self._fallback_llms),
+                    start=1,
+                ):
+                    try:
+                        result = await llm.invoke(prompt, *args, **kwargs)
+                        logger.info("Fallback model succeeded: %s", model)
+                        return result
+                    except Exception as exc:
+                        errors.append((model, exc))
+
+                        if index < len(self._fallback_llms):
+                            logger.warning(
+                                "Fallback model failed: %s. Falling back to %s.",
+                                model,
+                                self._models[index + 1],
+                            )
+
                 all_errors.extend(errors)
 
-                if result is not None:
-                    return result
-
-                # Every model in the chain failed this round. If they all
-                # failed specifically due to rate limiting (as opposed to a
-                # real error), it's worth backing off and retrying the whole
-                # chain -- free-tier 429s are typically transient.
-                all_rate_limited = bool(errors) and all(
-                    _is_rate_limit_error(exc) for _, exc in errors
-                )
-                if all_rate_limited and attempt < _RATE_LIMIT_MAX_RETRIES:
+                if (
+                    errors
+                    and all(_is_rate_limit_error(exc) for _, exc in errors)
+                    and attempt < _RATE_LIMIT_MAX_RETRIES
+                ):
                     wait = _RATE_LIMIT_BACKOFF_SECONDS * attempt
+
                     logger.warning(
-                        "All %d models rate-limited (attempt %d/%d). "
-                        "Backing off %ds before retrying the whole chain.",
-                        len(self._models), attempt,
-                        _RATE_LIMIT_MAX_RETRIES, wait,
+                        "All %d configured models were rate-limited "
+                        "(attempt %d/%d). Retrying the chain after %ds.",
+                        len(errors),
+                        attempt,
+                        _RATE_LIMIT_MAX_RETRIES,
+                        wait,
                     )
+
                     await asyncio.sleep(wait)
                     continue
 
                 break
 
-        details = "\n".join(f"{model}: {error!r}" for model, error in all_errors)
-        raise RuntimeError("All configured LLMs failed.\n" + details) from (
-            all_errors[-1][1] if all_errors else RuntimeError("no models configured")
+        details = "\n".join(
+            f"{model}: {error!r}" for model, error in all_errors
+        )
+
+        raise RuntimeError(
+            "All configured LLMs failed.\n" + details
+        ) from (
+            all_errors[-1][1]
+            if all_errors
+            else RuntimeError("no models configured")
         )
 
 
@@ -256,21 +260,13 @@ class OpenRouterForecastBot(ForecastBot):
     ForecastBot never silently falls back to its own defaults.
     """
 
-    # Each validation sample is a full extra parser call. With the parser
-    # models sharing OpenRouter's free rate-limit pool, keeping this at 1
-    # substantially cuts how often the chain gets rate-limited.
+    # structure_output performs additional validation calls. Keeping this at
+    # one is much friendlier to OpenRouter's free-tier provider limits.
     _structure_output_validation_samples = 1
 
     def _llm_config_defaults(self) -> dict[str, GeneralLlm]:
         """Configure only the forecasting_tools purpose this bot actually uses."""
         return {
-            "summarizer": FallbackGeneralLlm(
-                primary_model=PRIMARY_LLM,
-                fallback_model=FALLBACK_LLM,
-                third_model=THIRD_MODEL,
-                temperature=0.10,
-                timeout=240,
-            ),
             "parser": FallbackGeneralLlm(
                 primary_model=PARSER_PRIMARY_LLM,
                 fallback_model=PARSER_FALLBACK_LLM,
@@ -299,10 +295,18 @@ class OpenRouterForecastBot(ForecastBot):
             question_context=self._format_research_question_context(question),
         )
 
-        logger.info("Research for %s:\n%s", question.page_url, research[:1000])
+        logger.info(
+            "Research for %s:\n%s",
+            question.page_url,
+            research[:1000],
+        )
+
         return research
 
-    def _format_research_question_context(self, question: MetaculusQuestion) -> str:
+    def _format_research_question_context(
+        self,
+        question: MetaculusQuestion,
+    ) -> str:
         sections = [
             f"Question type: {type(question).__name__}",
             f"Metaculus question URL: {question.page_url}",
@@ -316,30 +320,44 @@ class OpenRouterForecastBot(ForecastBot):
             sections.append(f"Options: {question.options}")
 
         if isinstance(question, NumericQuestion):
-            sections.extend([
-                f"Units for answer: {question.unit_of_measure or 'Not stated'}",
-                f"Lower bound: {question.lower_bound}",
-                f"Upper bound: {question.upper_bound}",
-                f"Open lower bound: {question.open_lower_bound}",
-                f"Open upper bound: {question.open_upper_bound}",
-            ])
+            sections.extend(
+                [
+                    f"Units for answer: {question.unit_of_measure or 'Not stated'}",
+                    f"Lower bound: {question.lower_bound}",
+                    f"Upper bound: {question.upper_bound}",
+                    f"Open lower bound: {question.open_lower_bound}",
+                    f"Open upper bound: {question.open_upper_bound}",
+                ]
+            )
 
         if isinstance(question, DateQuestion):
-            sections.extend([
-                f"Lower date bound: {question.lower_bound}",
-                f"Upper date bound: {question.upper_bound}",
-                f"Open lower bound: {question.open_lower_bound}",
-                f"Open upper bound: {question.open_upper_bound}",
-            ])
+            sections.extend(
+                [
+                    f"Lower date bound: {question.lower_bound}",
+                    f"Upper date bound: {question.upper_bound}",
+                    f"Open lower bound: {question.open_lower_bound}",
+                    f"Open upper bound: {question.open_upper_bound}",
+                ]
+            )
 
         if isinstance(question, ConditionalQuestion):
-            sections.extend([
-                "Conditional structure:",
-                "PARENT:\n" + self._format_research_question_context(question.parent),
-                "CHILD:\n" + self._format_research_question_context(question.child),
-                "CHILD CONDITIONAL ON PARENT = YES:\n" + self._format_research_question_context(question.question_yes),
-                "CHILD CONDITIONAL ON PARENT = NO:\n" + self._format_research_question_context(question.question_no),
-            ])
+            sections.extend(
+                [
+                    "Conditional structure:",
+                    "PARENT:\n"
+                    + self._format_research_question_context(question.parent),
+                    "CHILD:\n"
+                    + self._format_research_question_context(question.child),
+                    "CHILD CONDITIONAL ON PARENT = YES:\n"
+                    + self._format_research_question_context(
+                        question.question_yes
+                    ),
+                    "CHILD CONDITIONAL ON PARENT = NO:\n"
+                    + self._format_research_question_context(
+                        question.question_no
+                    ),
+                ]
+            )
 
         return clean_indents("\n".join(sections))
 
@@ -395,6 +413,7 @@ class OpenRouterForecastBot(ForecastBot):
             The last thing you write is your final answer as: "Probability: ZZ%", 0-100
             """
         )
+
         reasoning = await generate_forecast_reasoning(prompt)
 
         logger.info(
@@ -481,6 +500,7 @@ class OpenRouterForecastBot(ForecastBot):
             Option_N: Probability_N
             """
         )
+
         reasoning = await generate_forecast_reasoning(prompt)
 
         logger.info(
@@ -548,19 +568,24 @@ class OpenRouterForecastBot(ForecastBot):
 
             {lower_bound_message}
             {upper_bound_message}
+
             Formatting Instructions:
             - Please notice the units requested and give your answer in these units (e.g. whether you represent a number as 1,000,000 or 1 million).
             - Never use scientific notation.
             - Always start with a smaller number (more negative if negative) and then increase from there. The value for percentile 10 should always be less than the value for percentile 20, and so on.
+
             Before answering you write:
             (a) The time left until the outcome to the question is known.
             (b) The outcome if nothing changed.
             (c) The outcome if the current trend continued.
-            (d) The expectations of experts and markets.
+            (d) The expectations of experts and markets, using only actual expert forecasts, market prices, polling/forecasting data, or other direct evidence found in the research.
+                Do NOT treat the question creator's numeric/date bounds as expert or market expectations. They are question metadata / soft constraints, not independent forecasts. If no direct expert or market expectation is available, explicitly say so instead of inferring one from the bounds.
             (e) A brief description of an unexpected scenario that results in a low outcome.
             (f) A brief description of an unexpected scenario that results in a high outcome.
             {self._get_conditional_disclaimer_if_necessary(question)}
+
             You remind yourself that good forecasters are humble and set wide 90/10 confidence intervals to account for unknown unknowns.
+
             The last thing you write is your final answer as:
             "
             Percentile 10: XX (lowest number value)
@@ -572,6 +597,7 @@ class OpenRouterForecastBot(ForecastBot):
             "
             """
         )
+
         reasoning = await generate_forecast_reasoning(prompt)
 
         logger.info(
@@ -587,7 +613,8 @@ class OpenRouterForecastBot(ForecastBot):
             - When parsing the text, please make sure to give the values (the ones assigned to percentiles) in terms of the correct units.
             - The units for the forecast are: {question.unit_of_measure}
             - Your work will be shown publicly with these units stated verbatim after the numbers your parse.
-            - As an example, someone else guessed that the answer will be between {question.lower_bound} {question.unit_of_measure} and {question.upper_bound} {question.unit_of_measure}, so the numbers parsed from an answer like this would be verbatim "{question.lower_bound}" and "{question.upper_bound}".
+            - The question's numeric bounds are metadata for interpreting the forecast. They are not expert or market forecasts. Do not add, invent, or reclassify them as evidence when parsing.
+            - Preserve a creator-supplied bound only when the final answer explicitly assigns that value to a percentile.
             - If the answer doesn't give the answer in the correct units, you should parse it in the right units. For instance if the answer gives numbers as $500,000,000 and units are "B $" then you should parse the answer as 0.5 (since $500,000,000 is $0.5 billion).
             - If percentiles are not explicitly given (e.g. only a single value is given) please don't return a parsed output, but rather indicate that the answer is not explicitly given in the text.
             - Turn any values that are in scientific notation into regular numbers.
@@ -629,6 +656,7 @@ class OpenRouterForecastBot(ForecastBot):
         prompt = clean_indents(
             f"""
             You are a professional forecaster interviewing for a job.
+
             Your interview question is:
             {question.question_text}
 
@@ -646,20 +674,25 @@ class OpenRouterForecastBot(ForecastBot):
 
             {lower_bound_message}
             {upper_bound_message}
+
             Formatting Instructions:
             - This is a date question, and as such, the answer must be expressed in terms of dates.
             - The dates must be written in the format of YYYY-MM-DD. If hours matter, please append the date with the hour in UTC and military time: YYYY-MM-DDTHH:MM:SSZ.No other formatting is allowed.
             - Always start with a lower date chronologically and then increase from there.
             - Do NOT forget this. The dates must be written in chronological order starting at the earliest time at percentile 10 and increasing from there.
+
             Before answering you write:
             (a) The time left until the outcome to the question is known.
             (b) The outcome if nothing changed.
             (c) The outcome if the current trend continued.
-            (d) The expectations of experts and markets.
+            (d) The expectations of experts and markets, using only actual expert forecasts, market prices, polling/forecasting data, or other direct evidence found in the research.
+                Do NOT treat the question creator's numeric/date bounds as expert or market expectations. They are question metadata / soft constraints, not independent forecasts. If no direct expert or market expectation is available, explicitly say so instead of inferring one from the bounds.
             (e) A brief description of an unexpected scenario that results in a low outcome.
             (f) A brief description of an unexpected scenario that results in a high outcome.
             {self._get_conditional_disclaimer_if_necessary(question)}
+
             You remind yourself that good forecasters are humble and set wide 90/10 confidence intervals to account for unknown unknowns.
+
             The last thing you write is your final answer as:
             "
             Percentile 10: YYYY-MM-DD (oldest date)
@@ -671,6 +704,7 @@ class OpenRouterForecastBot(ForecastBot):
             "
             """
         )
+
         reasoning = await generate_forecast_reasoning(prompt)
 
         logger.info(
@@ -683,7 +717,8 @@ class OpenRouterForecastBot(ForecastBot):
             f"""
             The text given to you is trying to give a forecast distribution for a date question.
             - This text is trying to answer the question: "{question.question_text}".
-            - As an example, someone else guessed that the answer will be between {question.lower_bound} and {question.upper_bound}, so the numbers parsed from an answer like this would be verbatim "{question.lower_bound}" and "{question.upper_bound}".
+            - The question's date bounds are metadata for interpreting the forecast. They are not expert or market forecasts. Do not add, invent, or reclassify them as evidence when parsing.
+            - Preserve a creator-supplied bound only when the final answer explicitly assigns that date to a percentile.
             - The output is given as dates/times please format it into a valid datetime parsable string. Assume midnight UTC if no hour is given.
             - If percentiles are not explicitly given (e.g. only a single value is given) please don't return a parsed output, but rather indicate that the answer is not explicitly given in the text.
             """
@@ -730,16 +765,24 @@ class OpenRouterForecastBot(ForecastBot):
     ) -> ReasonedPrediction[ConditionalPrediction]:
         """Forecast the parent/child components using forecasting-tools semantics."""
         parent_info, full_research = await self._get_question_prediction_info(
-            question.parent, research, "parent"
+            question.parent,
+            research,
+            "parent",
         )
         child_info, full_research = await self._get_question_prediction_info(
-            question.child, full_research, "child"
+            question.child,
+            full_research,
+            "child",
         )
         yes_info, full_research = await self._get_question_prediction_info(
-            question.question_yes, full_research, "yes"
+            question.question_yes,
+            full_research,
+            "yes",
         )
         no_info, full_research = await self._get_question_prediction_info(
-            question.question_no, full_research, "no"
+            question.question_no,
+            full_research,
+            "no",
         )
 
         full_reasoning = clean_indents(
@@ -780,20 +823,27 @@ class OpenRouterForecastBot(ForecastBot):
         from forecasting_tools.data_models.data_organizer import DataOrganizer
 
         previous_forecasts = question.previous_forecasts
+
         if (
             question_type in {"parent", "child"}
             and previous_forecasts
             and question_type not in getattr(
-                self, "force_reforecast_in_conditional", set()
+                self,
+                "force_reforecast_in_conditional",
+                set(),
             )
         ):
             previous_forecast = previous_forecasts[-1]
             current_utc_time = datetime.now(timezone.utc)
+
             if (
                 previous_forecast.timestamp_end is None
                 or previous_forecast.timestamp_end > current_utc_time
             ):
-                readable = DataOrganizer.get_readable_prediction(previous_forecast)
+                readable = DataOrganizer.get_readable_prediction(
+                    previous_forecast
+                )
+
                 return (
                     ReasonedPrediction(
                         prediction_value=PredictionAffirmed(),
@@ -806,9 +856,13 @@ class OpenRouterForecastBot(ForecastBot):
                 )
 
         info = await self._make_prediction(question, research)
+
         full_research = self._add_reasoning_to_research(
-            research, info, question_type
+            research,
+            info,
+            question_type,
         )
+
         return info, full_research
 
     def _add_reasoning_to_research(
@@ -820,6 +874,7 @@ class OpenRouterForecastBot(ForecastBot):
         from forecasting_tools.data_models.data_organizer import DataOrganizer
 
         label = question_type.title()
+
         return clean_indents(
             f"""
             {research}
@@ -845,6 +900,7 @@ class OpenRouterForecastBot(ForecastBot):
     ) -> str:
         if question.conditional_type not in ["yes", "no"]:
             return ""
+
         return clean_indents(
             """
             As you are given a conditional question with a parent and child, you are to only forecast the **CHILD** question, given the parent question's resolution.
@@ -901,9 +957,9 @@ class OpenRouterForecastBot(ForecastBot):
 
         if question.open_upper_bound:
             upper_bound_message = (
-                f"The question creator thinks the number is likely "
-                f"not higher than {upper_bound_number} "
-                f"{unit_of_measure}."
+                f"The question creator set a soft upper bound at "
+                f"{upper_bound_number} {unit_of_measure}. This is question "
+                f"metadata, not an expert or market forecast."
             )
         else:
             upper_bound_message = (
@@ -913,9 +969,9 @@ class OpenRouterForecastBot(ForecastBot):
 
         if question.open_lower_bound:
             lower_bound_message = (
-                f"The question creator thinks the number is likely "
-                f"not lower than {lower_bound_number} "
-                f"{unit_of_measure}."
+                f"The question creator set a soft lower bound at "
+                f"{lower_bound_number} {unit_of_measure}. This is question "
+                f"metadata, not an expert or market forecast."
             )
         else:
             lower_bound_message = (
@@ -930,10 +986,10 @@ class OpenRouterForecastBot(ForecastBot):
         Return the explicitly configured parser.
 
         The parser itself uses:
-            Qwen3.8 27B -> Gemma 4 31B
+            Qwen3.8 27B -> Gemma 4 31B -> Nemotron 3 Ultra
 
-        These free endpoints advertise structured-output support, unlike the
-        current Nemotron Ultra and Laguna endpoints.
+        Qwen and Gemma are preferred; Nemotron is the final fallback for
+        transient free-tier rate limits.
         """
 
         return self.get_llm("parser", "llm")
