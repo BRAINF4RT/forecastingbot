@@ -6,17 +6,23 @@ LLM architecture:
     Research summarisation:
         nvidia/nemotron-3-ultra-550b-a55b:free
             -> poolside/laguna-s-2.1:free
+            -> qwen/qwen3.8-27b:free
 
     Forecast reasoning:
         nvidia/nemotron-3-ultra-550b-a55b:free
             -> poolside/laguna-s-2.1:free
+            -> qwen/qwen3.8-27b:free
 
 Search-query generation is deliberately NOT performed by an LLM. The caller
 builds deterministic queries directly from the Metaculus question text.
 
 This module also rate-limits direct OpenRouter requests because the free
 endpoints can become overloaded when many Metaculus questions are processed
-at once.
+at once. This semaphore is a *separate* pool from bot.py's
+_GENERAL_LLM_SEMAPHORE (used only for structured-output parsing) -- the two
+don't share state, so total concurrent OpenRouter requests can reach the sum
+of both limits. Both are kept at 1 so a real run never sends more than 2
+simultaneous requests to the free endpoints at once.
 """
 from __future__ import annotations
 
@@ -34,7 +40,7 @@ PRIMARY_MODEL = "nvidia/nemotron-3-ultra-550b-a55b:free"
 FALLBACK_MODEL = "poolside/laguna-s-2.1:free"
 THIRD_MODEL = "qwen/qwen3.8-27b:free"
 
-_OPENROUTER_CONCURRENCY = 2
+_OPENROUTER_CONCURRENCY = 1
 _OPENROUTER_SEMAPHORE = asyncio.Semaphore(_OPENROUTER_CONCURRENCY)
 
 
