@@ -1,133 +1,80 @@
-"""End-to-end research pipeline."""
+"""End-to-end research pipeline compatibility wrapper."""
 from __future__ import annotations
+
+import asyncio
 import logging
-import re
+
 from clients import openrouter_helper
-from research.scraper import ScrapedSource, format_sources_as_markdown, gather_sources
+from research.scraper import web_search
 
 logger = logging.getLogger(__name__)
 
 
-def _clean(value: str) -> str:
-    return re.sub(r"\s+", " ", value or "").strip()
+def build_search_queries(question_text: str, num_queries: int = 3) -> list[str]:
+    """Build the same deterministic search queries used by bot.py."""
+    words = question_text.rstrip("?").split()
+    queries = [question_text]
+    if len(words) > 6:
+        queries.append(" ".join(words[:8]))
+    queries.append(" ".join(words[:6]) + " latest news")
+    deduped_queries = list(dict.fromkeys(queries))
+    return deduped_queries[:num_queries]
 
 
-def _unique(queries: list[str]) -> list[str]:
-    seen: set[str] = set()
-    result: list[str] = []
-    for query in queries:
-        query = _clean(query)
-        if query and query.casefold() not in seen:
-            seen.add(query.casefold())
-            result.append(query)
-    return result
+async def _free_web_research(question_text: str, num_queries: int = 3) -> str:
+    queries = build_search_queries(question_text, num_queries=num_queries)
 
+    async def run_query(query: str) -> str:
+        try:
+            return await asyncio.to_thread(web_search, query, 4, True)
+        except Exception as exc:
+            logger.warning("[RESEARCH] Web search failed for %r: %s", query, exc)
+            return ""
 
-def _deterministic_queries(question_text: str, resolution_criteria: str, background: str) -> list[str]:
-    question = _clean(question_text)
-    fragment = " ".join(question.split()[:16])
-    return _unique([
-        question,
-        f"{fragment} latest evidence",
-        f"{fragment} official data",
-        f"{fragment} expert forecast",
-        f"{fragment} historical trends",
-        f"{fragment} {_clean(resolution_criteria)[:120]}" if resolution_criteria else "",
-        f"{fragment} {_clean(background)[:120]}" if background else "",
-    ])
-
-
-async def _generate_queries(question_text: str, resolution_criteria: str, background: str, n: int) -> list[str]:
-    queries = await openrouter_helper.generate_search_queries(
-        question_text, resolution_criteria, background, n=n
-    )
-    return _unique(queries)[:n]
+    results = await asyncio.gather(*(run_query(query) for query in queries))
+    return "\n\n===\n\n".join(result for result in results if result)
 
 
 async def run_research_pipeline(
     question_text: str,
     resolution_criteria: str,
     background: str = "",
-    num_queries: int = 4,
-    results_per_query: int = 3,
+    num_queries: int = 3,
+    results_per_query: int = 4,
     summarize: bool = True,
 ) -> str:
-    logger.info("[RESEARCH] Starting research for question: %s", question_text)
-    original_query = _clean(question_text)
-    attempted: list[str] = []
-
-    try:
-        generated = await _generate_queries(
-            question_text, resolution_criteria, background, num_queries
+    """Compatibility entry point using deterministic queries and parallel search."""
+    if results_per_query != 4:
+        logger.info(
+            "[RESEARCH] results_per_query=%d requested; deterministic web_search path uses 4 sources per query.",
+            results_per_query,
         )
-    except Exception as exc:
-        logger.warning("[RESEARCH] Query generation failed: %s", exc)
-        generated = []
 
-    # The original question is ALWAYS searched alongside generated queries.
-    queries = _unique(generated + [original_query])
-    attempted.extend(queries)
-    logger.info("[RESEARCH] Attempt 1 queries: %s", queries)
-    all_sources = gather_sources(queries, results_per_query=results_per_query)
-
-    if not all_sources:
-        retry_background = (
-            f"{background}\n\nPrevious search returned zero usable sources. "
-            "Generate substantially different, specific queries. Do not repeat "
-            "previous queries."
-        )
-        try:
-            retry_generated = await _generate_queries(
-                question_text, resolution_criteria, retry_background, num_queries
-            )
-        except Exception as exc:
-            logger.warning("[RESEARCH] Replacement query generation failed: %s", exc)
-            retry_generated = []
-
-        # Original question is also retained on retry, in addition to new queries.
-        attempted_keys = {q.casefold() for q in attempted}
-        retry_queries = [
-            q for q in _unique(retry_generated + [original_query])
-            if q.casefold() not in attempted_keys
-        ]
-        attempted.extend(retry_queries)
-        if retry_queries:
-            logger.info("[RESEARCH] Attempt 2 queries: %s", retry_queries)
-            all_sources = gather_sources(
-                retry_queries, results_per_query=results_per_query
-            )
-
-    if not all_sources:
-        fallback_queries = [
-            q for q in _deterministic_queries(
-                question_text, resolution_criteria, background
-            )
-            if q.casefold() not in {x.casefold() for x in attempted}
-        ]
-        if fallback_queries:
-            logger.info("[RESEARCH] Attempt 3 queries: %s", fallback_queries)
-            all_sources = gather_sources(
-                fallback_queries, results_per_query=results_per_query
-            )
-
-    if not all_sources:
+    raw_research = await _free_web_research(
+        question_text,
+        num_queries=num_queries,
+    )
+    if not raw_research:
         return (
             "RESEARCH STATUS: NO_RESEARCH_AVAILABLE\n\n"
             "All web-search attempts returned zero usable sources. "
             "Do not treat this as evidence that no information exists."
         )
 
-    raw_research = format_sources_as_markdown(all_sources)
     if not summarize:
         return raw_research
 
     try:
         summary = await openrouter_helper.summarize_research(
-            question_text, resolution_criteria, background, raw_research
+            question_text,
+            resolution_criteria,
+            background,
+            raw_research,
         )
     except TypeError:
         summary = await openrouter_helper.summarize_research(
-            question_text, raw_research
+            question_text,
+            raw_research,
         )
     except Exception as exc:
         logger.warning("[RESEARCH] Research summarisation failed: %s", exc)
@@ -136,5 +83,4 @@ async def run_research_pipeline(
     if not summary:
         summary = "Research was retrieved, but summarisation failed. Raw sources follow."
 
-    sources_list = "\n".join(f"- {source.url}" for source in all_sources)
-    return f"{summary}\n\n**Sources consulted:**\n{sources_list}"
+    return summary
