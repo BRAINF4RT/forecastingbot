@@ -35,7 +35,7 @@ FALL_FUTUREEVAL_2026_ID = "fall-futureeval-2026"
 FALL_FUTUREEVAL_2026_URL = "https://www.metaculus.com/tournament/fall-futureeval-2026/"
 EXPECTED_PRIMARY_MODEL = "nvidia/nemotron-3-ultra-550b-a55b:free"
 EXPECTED_FALLBACK_MODEL = "poolside/laguna-s-2.1:free"
-EXPECTED_THIRD_MODEL = "openrouter/free"
+EXPECTED_THIRD_MODEL = "qwen/qwen3.8-27b:free"
 
 
 def validate_openrouter_configuration() -> None:
