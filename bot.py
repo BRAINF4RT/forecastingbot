@@ -131,7 +131,7 @@ class FallbackGeneralLlm(GeneralLlm):
         *,
         primary_model: str,
         fallback_model: str,
-        third_model: str | None,
+        third_model: str | None = None,
         temperature: float,
         timeout: float,
     ) -> None:
@@ -206,6 +206,7 @@ class OpenRouterForecastBot(ForecastBot):
             "summarizer": FallbackGeneralLlm(
                 primary_model=PRIMARY_LLM,
                 fallback_model=FALLBACK_LLM,
+                third_model=THIRD_MODEL,
                 temperature=0.10,
                 timeout=240,
             ),
