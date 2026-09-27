@@ -283,49 +283,41 @@ async def summarize_research(
     question_text: str,
     resolution_criteria: str,
     background: str,
+    fine_print: str,
+    question_context: str,
     raw_research: str,
     max_tokens: int = 32000,
 ) -> str:
-    """Summarise retrieved web evidence into a forecasting brief."""
+    """Summarise retrieved web evidence with complete Metaculus context visible."""
     if not raw_research.strip():
         return ""
 
     prompt = f"""
-You are the research-analysis specialist for a professional forecasting bot.
+You are an assistant to a superforecaster.
+The superforecaster will give you a question they intend to forecast on.
+To be a great assistant, you generate a concise but detailed rundown of the most relevant news, including if the question would resolve Yes or No based on current information.
+You do not produce forecasts yourself.
 
-FORECASTING QUESTION:
+Question:
 {question_text}
 
-RESOLUTION CRITERIA (this defines exactly what counts as relevant):
+This question's outcome will be determined by the specific criteria below:
 {resolution_criteria}
 
-BACKGROUND:
-{background}
+{fine_print}
 
-WEB RESEARCH:
+The complete Metaculus question information is below. Use it to understand the exact question, its type, any options or units, date/numeric bounds, and conditional structure.
+
+{question_context}
+
+Your research task is to identify the facts and developments most relevant to this exact question and its resolution criteria. Discard material that does not help determine how this particular question will resolve. Preserve important dates, numbers, named sources, and uncertainty. Explicitly note meaningful disagreement between sources. Do not invent facts and do not produce a forecast.
+
+Web research:
 {raw_research[:30000]}
-
-Create a concise factual research brief for another forecaster.
-
-Requirements:
-- Judge relevance against the exact resolution criteria, not merely the topic.
-- Discard material that does not help determine this question's outcome.
-- Preserve important dates, numbers, percentages, estimates and named sources.
-- Distinguish established facts from uncertainty.
-- Highlight recent developments that materially affect resolution.
-- Mention source domains when possible.
-- Explicitly identify disagreements between sources.
-- Never invent facts or unsupported predictions.
-- Keep the briefing under approximately 900 words.
 """
 
     return await generate(
         prompt,
-        system_prompt=(
-            "You are an evidence-focused research analyst. Extract only "
-            "information that bears on how the exact Metaculus question "
-            "will resolve. Never invent facts."
-        ),
         temperature=0.15,
         max_tokens=max_tokens,
         timeout=240.0,
@@ -342,12 +334,6 @@ async def generate_forecast_reasoning(
     """Generate the forecasting model's reasoning and final formatted answer."""
     return await generate(
         prompt,
-        system_prompt=(
-            "You are an expert probabilistic forecaster. Produce calibrated "
-            "forecasts, carefully follow the resolution criteria, distinguish "
-            "known facts from uncertainty, consider base rates and plausible "
-            "alternatives, and obey the requested final-answer format exactly."
-        ),
         temperature=temperature,
         max_tokens=max_tokens,
         timeout=240.0,
