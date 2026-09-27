@@ -220,24 +220,60 @@ class OpenRouterForecastBot(ForecastBot):
         self,
         question: MetaculusQuestion,
     ) -> str:
-        logger.info(
-            "Starting research for %s",
-            question.page_url,
-        )
+        """Run web research with complete Metaculus question context visible to the researcher LLMs."""
+        logger.info("Starting research for %s", question.page_url)
 
         research = await run_research_pipeline(
             question_text=question.question_text,
             resolution_criteria=question.resolution_criteria or "",
             background=question.background_info or "",
+            fine_print=question.fine_print or "",
+            question_context=self._format_research_question_context(question),
         )
 
-        logger.info(
-            "Research for %s:\n%s",
-            question.page_url,
-            research[:1000],
-        )
-
+        logger.info("Research for %s:\n%s", question.page_url, research[:1000])
         return research
+
+    def _format_research_question_context(self, question: MetaculusQuestion) -> str:
+        sections = [
+            f"Question type: {type(question).__name__}",
+            f"Metaculus question URL: {question.page_url}",
+            f"Question: {question.question_text}",
+            f"Background: {question.background_info or ''}",
+            f"Resolution criteria: {question.resolution_criteria or ''}",
+            f"Fine print: {question.fine_print or ''}",
+        ]
+
+        if isinstance(question, MultipleChoiceQuestion):
+            sections.append(f"Options: {question.options}")
+
+        if isinstance(question, NumericQuestion):
+            sections.extend([
+                f"Units for answer: {question.unit_of_measure or 'Not stated'}",
+                f"Lower bound: {question.lower_bound}",
+                f"Upper bound: {question.upper_bound}",
+                f"Open lower bound: {question.open_lower_bound}",
+                f"Open upper bound: {question.open_upper_bound}",
+            ])
+
+        if isinstance(question, DateQuestion):
+            sections.extend([
+                f"Lower date bound: {question.lower_bound}",
+                f"Upper date bound: {question.upper_bound}",
+                f"Open lower bound: {question.open_lower_bound}",
+                f"Open upper bound: {question.open_upper_bound}",
+            ])
+
+        if isinstance(question, ConditionalQuestion):
+            sections.extend([
+                "Conditional structure:",
+                "PARENT:\n" + self._format_research_question_context(question.parent),
+                "CHILD:\n" + self._format_research_question_context(question.child),
+                "CHILD CONDITIONAL ON PARENT = YES:\n" + self._format_research_question_context(question.question_yes),
+                "CHILD CONDITIONAL ON PARENT = NO:\n" + self._format_research_question_context(question.question_no),
+            ])
+
+        return clean_indents("\n".join(sections))
 
     # -----------------------------------------------------------------------
     # BINARY
@@ -251,54 +287,46 @@ class OpenRouterForecastBot(ForecastBot):
 
         prompt = clean_indents(
             f"""
-            You are a professional probabilistic forecaster.
+            You are a professional forecaster interviewing for a job.
 
-            Your task is to forecast the probability of the following
-            binary event.
+            Your interview question is:
 
-            QUESTION:
             {question.question_text}
 
-            QUESTION BACKGROUND:
+            Question background:
+
             {question.background_info}
 
-            RESOLUTION CRITERIA:
+            This question's outcome will be determined by the specific criteria below. These criteria have not yet been satisfied:
+
             {question.resolution_criteria}
 
-            FINE PRINT:
             {question.fine_print}
 
-            RESEARCH:
+
+            Your research assistant says:
+
             {research}
 
-            TODAY:
-            {datetime.now().strftime("%Y-%m-%d")}
+            Today is {datetime.now().strftime("%Y-%m-%d")}.
 
-            Before giving your final probability, carefully consider:
-            (a) How much time remains until the outcome is known.
-            (b) The status quo if nothing significant changes.
-            (c) A plausible scenario producing a NO outcome.
-            (d) A plausible scenario producing a YES outcome.
-            (e) Base rates and historical precedent.
-            (f) Important evidence supporting each side.
-            (g) Important uncertainties and unknowns.
+            Before answering you write:
 
-            Good forecasters generally put substantial weight on the
-            status quo because the world often changes more slowly than
-            people expect.
+            (a) The time left until the outcome to the question is known.
 
-            Do not blindly follow the research. Evaluate its quality.
+            (b) The status quo outcome if nothing changed.
+
+            (c) A brief description of a scenario that results in a No outcome.
+
+            (d) A brief description of a scenario that results in a Yes outcome.
+
+            You write your rationale remembering that good forecasters put extra weight on the status quo outcome since the world changes slowly most of the time.
 
             {self._get_conditional_disclaimer_if_necessary(question)}
 
-            The final line MUST be exactly:
-
-            Probability: ZZ%
-
-            where ZZ is your probability from 0 to 100.
+            The last thing you write is your final answer as: "Probability: ZZ%", 0-100
             """
         )
-
         reasoning = await generate_forecast_reasoning(prompt)
 
         logger.info(
@@ -339,61 +367,52 @@ class OpenRouterForecastBot(ForecastBot):
 
         prompt = clean_indents(
             f"""
-            You are a professional probabilistic forecaster.
+            You are a professional forecaster interviewing for a job.
 
-            QUESTION:
+            Your interview question is:
+
             {question.question_text}
 
-            OPTIONS:
-            {question.options}
+            The options are: {question.options}
 
-            BACKGROUND:
+
+            Background:
+
             {question.background_info}
-
-            RESOLUTION CRITERIA:
             {question.resolution_criteria}
 
-            FINE PRINT:
             {question.fine_print}
 
-            RESEARCH:
+
+            Your research assistant says:
+
             {research}
 
-            TODAY:
-            {datetime.now().strftime("%Y-%m-%d")}
+            Today is {datetime.now().strftime("%Y-%m-%d")}.
 
-            Before producing probabilities, consider:
-            (a) The time remaining.
-            (b) The status quo outcome.
-            (c) The most likely option.
-            (d) Why each alternative could occur.
-            (e) Base rates and historical precedent.
-            (f) Unexpected scenarios.
-            (g) Whether the research contains conflicting evidence.
+            Before answering you write:
 
-            Do not assign probability merely because an option sounds
-            plausible.
+            (a) The time left until the outcome to the question is known.
 
-            Probabilities should reflect your actual assessment.
+            (b) The status quo outcome if nothing changed.
 
-            Give a probability to EVERY option.
-
-            The final answer must contain the options in exactly this order:
-
-            {question.options}
-
-            Use:
-
-            Option_A: Probability_A
-            Option_B: Probability_B
-            ...
+            (c) A description of an scenario that results in an unexpected outcome.
 
             {self._get_conditional_disclaimer_if_necessary(question)}
 
-            Probabilities should sum to approximately 100%.
+            You write your rationale remembering that (1) good forecasters put extra weight on the status quo outcome since the world changes slowly most of the time, and (2) good forecasters leave some moderate probability on most options to account for unexpected outcomes.
+
+            The last thing you write is your final probabilities for the N options in this order {question.options} as:
+
+            Option_A: Probability_A
+
+            Option_B: Probability_B
+
+            ...
+
+            Option_N: Probability_N
             """
         )
-
         reasoning = await generate_forecast_reasoning(prompt)
 
         logger.info(
@@ -404,17 +423,10 @@ class OpenRouterForecastBot(ForecastBot):
 
         parsing_instructions = clean_indents(
             f"""
-            The valid option names are:
-
+            Make sure that all option names are one of the following:
             {question.options}
-
-            When parsing the answer:
-            - Every valid option must appear.
-            - Use exactly the supplied option names.
-            - Remove prefixes such as "Option" if they are not part of
-              the actual option name.
-            - Preserve 0% probabilities.
-            - Do not invent options.
+            The text you are parsing may prepend these options with some variation of "Option" which you should remove if not part of the option names I just gave you.
+            Additionally, you may sometimes need to parse a 0% probability. Please do not skip options with 0% but rather make it an entry in your final list with 0% probability.
             """
         )
 
@@ -447,68 +459,51 @@ class OpenRouterForecastBot(ForecastBot):
 
         prompt = clean_indents(
             f"""
-            You are a professional probabilistic forecaster.
+            You are a professional forecaster interviewing for a job.
 
-            QUESTION:
+            Your interview question is:
             {question.question_text}
-
-            BACKGROUND:
+            Background:
             {question.background_info}
 
-            RESOLUTION CRITERIA:
             {question.resolution_criteria}
 
-            FINE PRINT:
             {question.fine_print}
 
-            UNITS:
-            {question.unit_of_measure if question.unit_of_measure else "Not stated; infer carefully."}
+            Units for answer: {question.unit_of_measure if question.unit_of_measure else "Not stated (please infer this)"}
 
-            RESEARCH:
+            Your research assistant says:
+
             {research}
 
-            TODAY:
-            {datetime.now().strftime("%Y-%m-%d")}
+            Today is {datetime.now().strftime("%Y-%m-%d")}.
 
-            QUESTION LOWER BOUND:
             {lower_bound_message}
-
-            QUESTION UPPER BOUND:
             {upper_bound_message}
-
-            Consider:
-            (a) The time remaining.
-            (b) The current value or status quo.
-            (c) Historical base rates.
-            (d) Current trends.
-            (e) Expert and market expectations where available.
-            (f) A plausible low-outcome scenario.
-            (g) A plausible high-outcome scenario.
-            (h) Unknown unknowns.
-
-            Be appropriately uncertain.
-
-            Formatting requirements:
-            - Use the requested units.
+            Formatting Instructions:
+            - Please notice the units requested and give your answer in these units (e.g. whether you represent a number as 1,000,000 or 1 million).
             - Never use scientific notation.
-            - Percentile values must increase monotonically.
-            - Do not invent unsupported precision.
-
+            - Always start with a smaller number (more negative if negative) and then increase from there. The value for percentile 10 should always be less than the value for percentile 20, and so on.
+            Before answering you write:
+            (a) The time left until the outcome to the question is known.
+            (b) The outcome if nothing changed.
+            (c) The outcome if the current trend continued.
+            (d) The expectations of experts and markets.
+            (e) A brief description of an unexpected scenario that results in a low outcome.
+            (f) A brief description of an unexpected scenario that results in a high outcome.
             {self._get_conditional_disclaimer_if_necessary(question)}
-
-            Your final answer MUST contain exactly:
-
-            Percentile 10: XX
+            You remind yourself that good forecasters are humble and set wide 90/10 confidence intervals to account for unknown unknowns.
+            The last thing you write is your final answer as:
+            "
+            Percentile 10: XX (lowest number value)
             Percentile 20: XX
             Percentile 40: XX
             Percentile 60: XX
             Percentile 80: XX
-            Percentile 90: XX
-
-            where XX is a numerical value in the requested units.
+            Percentile 90: XX (highest number value)
+            "
             """
         )
-
         reasoning = await generate_forecast_reasoning(prompt)
 
         logger.info(
@@ -519,20 +514,15 @@ class OpenRouterForecastBot(ForecastBot):
 
         parsing_instructions = clean_indents(
             f"""
-            The numeric question is:
-
-            {question.question_text}
-
-            Units:
-            {question.unit_of_measure}
-
-            When parsing:
-            - Values must be expressed in the correct units.
-            - Convert scientific notation to ordinary numbers.
-            - Only use percentile values explicitly supported by the
-              model's final answer.
-            - Preserve the requested percentile labels.
-            - Do not invent missing percentile values.
+            The text given to you is trying to give a forecast distribution for a numeric question.
+            - This text is trying to answer the numeric question: "{question.question_text}".
+            - When parsing the text, please make sure to give the values (the ones assigned to percentiles) in terms of the correct units.
+            - The units for the forecast are: {question.unit_of_measure}
+            - Your work will be shown publicly with these units stated verbatim after the numbers your parse.
+            - As an example, someone else guessed that the answer will be between {question.lower_bound} {question.unit_of_measure} and {question.upper_bound} {question.unit_of_measure}, so the numbers parsed from an answer like this would be verbatim "{question.lower_bound}" and "{question.upper_bound}".
+            - If the answer doesn't give the answer in the correct units, you should parse it in the right units. For instance if the answer gives numbers as $500,000,000 and units are "B $" then you should parse the answer as 0.5 (since $500,000,000 is $0.5 billion).
+            - If percentiles are not explicitly given (e.g. only a single value is given) please don't return a parsed output, but rather indicate that the answer is not explicitly given in the text.
+            - Turn any values that are in scientific notation into regular numbers.
             """
         )
 
@@ -570,63 +560,49 @@ class OpenRouterForecastBot(ForecastBot):
 
         prompt = clean_indents(
             f"""
-            You are a professional probabilistic forecaster.
-
-            QUESTION:
+            You are a professional forecaster interviewing for a job.
+            Your interview question is:
             {question.question_text}
 
-            BACKGROUND:
+            Background:
             {question.background_info}
 
-            RESOLUTION CRITERIA:
             {question.resolution_criteria}
 
-            FINE PRINT:
             {question.fine_print}
 
-            RESEARCH:
+            Your research assistant says:
             {research}
 
-            TODAY:
-            {datetime.now().strftime("%Y-%m-%d")}
+            Today is {datetime.now().strftime("%Y-%m-%d")}.
 
-            QUESTION LOWER BOUND:
             {lower_bound_message}
-
-            QUESTION UPPER BOUND:
             {upper_bound_message}
-
-            Consider:
-            (a) The time remaining until the outcome is known.
-            (b) The status quo / current trajectory.
-            (c) Historical base rates for similar events.
-            (d) Expert and market expectations where available.
-            (e) A plausible early-outcome scenario.
-            (f) A plausible late-outcome scenario.
-            (g) Unknown unknowns.
-
-            Be appropriately uncertain. Good forecasters usually need wider
-            date ranges than their first instinct suggests.
-
-            Formatting requirements:
-            - Dates must be in ISO format: YYYY-MM-DD.
-            - Percentile dates must increase monotonically
-              (P10 earliest, P90 latest).
-            - Do not invent unsupported precision.
-
+            Formatting Instructions:
+            - This is a date question, and as such, the answer must be expressed in terms of dates.
+            - The dates must be written in the format of YYYY-MM-DD. If hours matter, please append the date with the hour in UTC and military time: YYYY-MM-DDTHH:MM:SSZ.No other formatting is allowed.
+            - Always start with a lower date chronologically and then increase from there.
+            - Do NOT forget this. The dates must be written in chronological order starting at the earliest time at percentile 10 and increasing from there.
+            Before answering you write:
+            (a) The time left until the outcome to the question is known.
+            (b) The outcome if nothing changed.
+            (c) The outcome if the current trend continued.
+            (d) The expectations of experts and markets.
+            (e) A brief description of an unexpected scenario that results in a low outcome.
+            (f) A brief description of an unexpected scenario that results in a high outcome.
             {self._get_conditional_disclaimer_if_necessary(question)}
-
-            Your final answer MUST contain exactly:
-
-            Percentile 10: YYYY-MM-DD
+            You remind yourself that good forecasters are humble and set wide 90/10 confidence intervals to account for unknown unknowns.
+            The last thing you write is your final answer as:
+            "
+            Percentile 10: YYYY-MM-DD (oldest date)
             Percentile 20: YYYY-MM-DD
             Percentile 40: YYYY-MM-DD
             Percentile 60: YYYY-MM-DD
             Percentile 80: YYYY-MM-DD
-            Percentile 90: YYYY-MM-DD
+            Percentile 90: YYYY-MM-DD (newest date)
+            "
             """
         )
-
         reasoning = await generate_forecast_reasoning(prompt)
 
         logger.info(
@@ -637,18 +613,11 @@ class OpenRouterForecastBot(ForecastBot):
 
         parsing_instructions = clean_indents(
             f"""
-            The question is a DATE question:
-
-            {question.question_text}
-
-            When parsing:
-            - Parse each percentile value as an ISO date (YYYY-MM-DD).
-            - If the target schema requires a numeric value, convert the
-              parsed date to a Unix timestamp (seconds since epoch, UTC).
-            - Only use percentile values explicitly supported by the
-              model's final answer.
-            - Preserve the requested percentile labels.
-            - Do not invent missing percentile values.
+            The text given to you is trying to give a forecast distribution for a date question.
+            - This text is trying to answer the question: "{question.question_text}".
+            - As an example, someone else guessed that the answer will be between {question.lower_bound} and {question.upper_bound}, so the numbers parsed from an answer like this would be verbatim "{question.lower_bound}" and "{question.upper_bound}".
+            - The output is given as dates/times please format it into a valid datetime parsable string. Assume midnight UTC if no hour is given.
+            - If percentiles are not explicitly given (e.g. only a single value is given) please don't return a parsed output, but rather indicate that the answer is not explicitly given in the text.
             """
         )
 
@@ -806,13 +775,12 @@ class OpenRouterForecastBot(ForecastBot):
         self,
         question: MetaculusQuestion,
     ) -> str:
-        if getattr(question, "conditional_type", None) not in {"yes", "no"}:
+        if question.conditional_type not in ["yes", "no"]:
             return ""
         return clean_indents(
             """
-            This is a conditional child question. Forecast ONLY the child outcome
-            under the stated parent resolution; do not independently re-forecast
-            the parent inside this component.
+            As you are given a conditional question with a parent and child, you are to only forecast the **CHILD** question, given the parent question's resolution.
+            You never re-forecast the parent question under any circumstances, but you use probabilistic reasoning, strongly considering the parent question's resolution, to forecast the child question.
             """
         )
 
