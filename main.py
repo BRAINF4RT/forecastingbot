@@ -116,39 +116,81 @@ def create_bot(*, publish_reports_to_metaculus: bool) -> OpenRouterForecastBot:
     )
 
 
+def _dedupe_questions(questions: list) -> list:
+    """
+    get_all_open_questions_from_tournament() fetches questions with
+    group_question_mode="unpack_subquestions", which can hand back the
+    same question (same id_of_question / page_url) more than once for
+    certain group/conditional questions. That silently doubles the
+    research + forecast work (and the free-tier API calls) for that
+    question. Dedupe by id_of_question before forecasting.
+    """
+    deduped = []
+    seen_ids: set[int] = set()
+    for question in questions:
+        question_id = question.id_of_question
+        if question_id is not None and question_id in seen_ids:
+            logger.warning(
+                "Skipping duplicate question returned by "
+                "get_all_open_questions_from_tournament: %s (id=%s)",
+                question.page_url, question_id,
+            )
+            continue
+        if question_id is not None:
+            seen_ids.add(question_id)
+        deduped.append(question)
+
+    if len(deduped) != len(questions):
+        logger.warning(
+            "%d questions returned, %d after deduplication.",
+            len(questions), len(deduped),
+        )
+
+    return deduped
+
+
 async def _run_forecasting_async(
     bot: OpenRouterForecastBot,
     run_mode: Literal["tournament", "metaculus_cup", "test_questions"],
 ) -> list:
     client = MetaculusClient()
 
+    async def _forecast_tournament_deduped(tournament_id: int | str) -> list:
+        questions = client.get_all_open_questions_from_tournament(tournament_id)
+        deduped = _dedupe_questions(questions)
+        return await bot.forecast_questions(deduped, return_exceptions=True)
+
     if run_mode == "tournament":
-        seasonal = await bot.forecast_on_tournament(
-            FALL_FUTUREEVAL_2026_ID,
-            return_exceptions=True,
-        )
-        minibench = await bot.forecast_on_tournament(
-            client.CURRENT_MINIBENCH_ID,
-            return_exceptions=True,
+        seasonal = await _forecast_tournament_deduped(FALL_FUTUREEVAL_2026_ID)
+        minibench = await _forecast_tournament_deduped(
+            client.CURRENT_MINIBENCH_ID
         )
         return seasonal + minibench
 
     if run_mode == "metaculus_cup":
         bot.skip_previously_forecasted_questions = False
-        return await bot.forecast_on_tournament(
-            client.CURRENT_METACULUS_CUP_ID,
-            return_exceptions=True,
-        )
+        return await _forecast_tournament_deduped(client.CURRENT_METACULUS_CUP_ID)
 
     bot.skip_previously_forecasted_questions = False
 
     # The official bot-testing-area contains examples of all supported
-    # question types. Test mode forecasts them without publishing so CI can
-    # exercise binary, multiple-choice, numeric, date, and conditional paths.
-    return await bot.forecast_on_tournament(
-        "bot-testing-area",
-        return_exceptions=True,
+    # question types. Test mode only needs to confirm the pipeline runs
+    # end-to-end, so it forecasts a single question rather than every
+    # example in the tournament -- this keeps CI runs fast and avoids
+    # burning through the free-tier rate limits on every push.
+    questions = client.get_all_open_questions_from_tournament("bot-testing-area")
+    deduped = _dedupe_questions(questions)
+
+    if not deduped:
+        logger.warning("bot-testing-area returned no open questions.")
+        return []
+
+    single_question = deduped[:1]
+    logger.info(
+        "test_questions mode: forecasting 1/%d available question(s): %s",
+        len(deduped), single_question[0].page_url,
     )
+    return await bot.forecast_questions(single_question, return_exceptions=True)
 
 
 def run_forecasting(
