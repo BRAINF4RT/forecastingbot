@@ -2,13 +2,14 @@
 OpenRouter Metaculus Forecast Bot.
 
 LLM architecture:
-    Search query generation
+    Deterministic web-search query construction
         |
-        +--> Google Gemma 4 31B IT :free
-             reasoning = OFF
+        +--> full Metaculus question text
+        +--> first 8 words (for questions longer than 6 words)
+        +--> first 6 words + "latest news"
         |
         v
-    DDGS web research
+    Concurrent DDGS web research
         |
         v
     Nemotron 3 Ultra :free
@@ -34,8 +35,8 @@ Nemotron -> Laguna pair used for research/reasoning. Nemotron 3 Ultra does
 not advertise native `structured_outputs` support on OpenRouter, which was
 causing forecasting_tools' strict JSON extractor to come back empty
 ("<<REQUESTED TYPE WAS NOT FOUND IN TEXT>>") often enough to sink whole
-questions. The Nex-N2.5 pair has confirmed native structured-output
-support and is used for parsing only.
+questions. The Nex-N2.5 pair has confirmed native structured-output support
+and is used for parsing only.
 """
 
 from __future__ import annotations
@@ -70,8 +71,9 @@ from clients.openrouter_helper import (
     PRIMARY_MODEL,
     THIRD_MODEL,
     generate_forecast_reasoning,
+    summarize_research,
 )
-from research.pipeline import run_research_pipeline
+from research.scraper import web_search
 
 logger = logging.getLogger(__name__)
 
@@ -81,14 +83,12 @@ logger = logging.getLogger(__name__)
 
 PRIMARY_LLM = f"openrouter/{PRIMARY_MODEL}"
 FALLBACK_LLM = f"openrouter/{FALLBACK_MODEL}"
-
 # Dedicated parser models: these need reliable native structured-output
 # support, which Nemotron/Laguna do not advertise. Verified live on
 # OpenRouter's free tier -- re-check https://openrouter.ai/models?max_price=0
 # periodically since the free roster rotates.
 PARSER_PRIMARY_LLM = "openrouter/nex-agi/nex-n2.5-pro:free"
 PARSER_FALLBACK_LLM = "openrouter/nex-agi/nex-n2.5-mini:free"
-
 # Maximum number of forecasting-tools / LiteLLM calls allowed at once.
 #
 # This is separate from the direct OpenRouter semaphore in
@@ -98,6 +98,91 @@ _GENERAL_LLM_CONCURRENCY = 2
 _GENERAL_LLM_SEMAPHORE = asyncio.Semaphore(
     _GENERAL_LLM_CONCURRENCY
 )
+
+
+def build_search_queries(
+    question_text: str,
+    num_queries: int = 3,
+) -> list[str]:
+    """
+    Build deterministic web-search queries directly from the Metaculus
+    question text.
+
+    Query generation does not use an LLM. The long natural-language question
+    and a short keyword fragment tend to surface different search results.
+    The third query biases one of the searches toward recent coverage.
+    """
+    # Query 1 is the full Metaculus question text verbatim.
+    queries = [question_text]
+
+    # Strip a trailing question mark only for the derived word-based queries.
+    words = question_text.rstrip("?").split()
+
+    # Query 2: a shorter keyword-style variant for longer questions.
+    if len(words) > 6:
+        queries.append(" ".join(words[:8]))
+
+    # Query 3: bias one search toward recent coverage.
+    queries.append(" ".join(words[:6]) + " latest news")
+
+    # Preserve order while removing duplicates in case short questions cause
+    # query variants to collapse to the same string.
+    deduped_queries = list(dict.fromkeys(queries))
+
+    return deduped_queries[:num_queries]
+
+
+async def free_web_research(
+    question_text: str,
+    num_queries: int = 3,
+) -> str:
+    """
+    Run deterministic free web research concurrently.
+
+    Each query is sent to the blocking web_search() function through
+    asyncio.to_thread() so the synchronous scraper does not block the event
+    loop. Each query requests up to four scraped sources. The results are
+    concatenated with === separators into one research-context blob for the
+    researcher LLM.
+    """
+    deduped_queries = build_search_queries(
+        question_text,
+        num_queries=num_queries,
+    )
+
+    logger.info("[RESEARCH] Deterministic queries: %s", deduped_queries)
+
+    async def run_query(query: str) -> str:
+        try:
+            return await asyncio.to_thread(
+                web_search,
+                query,
+                4,
+                True,
+            )
+        except Exception as exc:
+            logger.warning(
+                "[RESEARCH] Web search failed for %r: %s",
+                query,
+                exc,
+            )
+            return ""
+
+    results = await asyncio.gather(
+        *(run_query(query) for query in deduped_queries)
+    )
+
+    research_context = "\n\n===\n\n".join(
+        result for result in results if result
+    )
+
+    logger.info(
+        "[RESEARCH] Completed %d/%d searches.",
+        sum(bool(result) for result in results),
+        len(deduped_queries),
+    )
+
+    return research_context
 
 
 class FallbackGeneralLlm(GeneralLlm):
@@ -136,7 +221,6 @@ class FallbackGeneralLlm(GeneralLlm):
 
     async def invoke(self, prompt: str, *args: Any, **kwargs: Any) -> Any:
         errors: list[tuple[str, Exception]] = []
-
         async with _GENERAL_LLM_SEMAPHORE:
             try:
                 return await super().invoke(prompt, *args, **kwargs)
@@ -146,7 +230,6 @@ class FallbackGeneralLlm(GeneralLlm):
                     "Primary model failed: %s. Falling back to %s.",
                     self._models[0], self._models[1],
                 )
-
             for model, llm in zip(self._models[1:], self._fallback_llms):
                 try:
                     result = await llm.invoke(prompt, *args, **kwargs)
@@ -159,7 +242,6 @@ class FallbackGeneralLlm(GeneralLlm):
                             "Fallback model failed: %s. Falling back to %s.",
                             model, self._models[self._models.index(model) + 1],
                         )
-
         details = "\n".join(f"{model}: {error!r}" for model, error in errors)
         raise RuntimeError("All configured LLMs failed.\n" + details) from errors[-1][1]
 
@@ -175,10 +257,7 @@ class OpenRouterForecastBot(ForecastBot):
     _structure_output_validation_samples = 2
 
     def _llm_config_defaults(self) -> dict[str, GeneralLlm]:
-        """
-        Explicitly configure every forecasting_tools LLM purpose.
-        """
-
+        """Explicitly configure every forecasting_tools LLM purpose."""
         return {
             "default": FallbackGeneralLlm(
                 primary_model=PRIMARY_LLM,
@@ -223,11 +302,31 @@ class OpenRouterForecastBot(ForecastBot):
             question.page_url,
         )
 
-        research = await run_research_pipeline(
-            question_text=question.question_text,
-            resolution_criteria=question.resolution_criteria or "",
-            background=question.background_info or "",
+        raw_research = await free_web_research(
+            question.question_text,
         )
+
+        if not raw_research.strip():
+            research = (
+                "RESEARCH STATUS: NO_RESEARCH_AVAILABLE\n\n"
+                "All web-search attempts returned zero usable sources. "
+                "Do not treat this as evidence that no information exists."
+            )
+        else:
+            try:
+                research = await summarize_research(
+                    question.question_text,
+                    question.resolution_criteria or "",
+                    question.background_info or "",
+                    raw_research,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Research summarisation failed for %s: %s",
+                    question.page_url,
+                    exc,
+                )
+                research = raw_research
 
         logger.info(
             "Research for %s:\n%s",
@@ -250,7 +349,6 @@ class OpenRouterForecastBot(ForecastBot):
         prompt = clean_indents(
             f"""
             You are a professional probabilistic forecaster.
-
             Your task is to forecast the probability of the following
             binary event.
 
@@ -271,7 +369,6 @@ class OpenRouterForecastBot(ForecastBot):
 
             TODAY:
             {datetime.now().strftime("%Y-%m-%d")}
-
             Before giving your final probability, carefully consider:
             (a) How much time remains until the outcome is known.
             (b) The status quo if nothing significant changes.
@@ -280,7 +377,6 @@ class OpenRouterForecastBot(ForecastBot):
             (e) Base rates and historical precedent.
             (f) Important evidence supporting each side.
             (g) Important uncertainties and unknowns.
-
             Good forecasters generally put substantial weight on the
             status quo because the world often changes more slowly than
             people expect.
@@ -296,7 +392,6 @@ class OpenRouterForecastBot(ForecastBot):
         )
 
         reasoning = await generate_forecast_reasoning(prompt)
-
         logger.info(
             "Forecast reasoning for %s: %s",
             question.page_url,
@@ -309,7 +404,6 @@ class OpenRouterForecastBot(ForecastBot):
             model=self._parser_llm(),
             num_validation_samples=self._structure_output_validation_samples,
         )
-
         decimal_pred = max(
             0.01,
             min(
@@ -345,7 +439,6 @@ class OpenRouterForecastBot(ForecastBot):
 
             BACKGROUND:
             {question.background_info}
-
             RESOLUTION CRITERIA:
             {question.resolution_criteria}
 
@@ -357,7 +450,6 @@ class OpenRouterForecastBot(ForecastBot):
 
             TODAY:
             {datetime.now().strftime("%Y-%m-%d")}
-
             Before producing probabilities, consider:
             (a) The time remaining.
             (b) The status quo outcome.
@@ -369,7 +461,6 @@ class OpenRouterForecastBot(ForecastBot):
 
             Do not assign probability merely because an option sounds
             plausible.
-
             Probabilities should reflect your actual assessment.
 
             Give a probability to EVERY option.
@@ -389,7 +480,6 @@ class OpenRouterForecastBot(ForecastBot):
         )
 
         reasoning = await generate_forecast_reasoning(prompt)
-
         logger.info(
             "Forecast reasoning for %s: %s",
             question.page_url,
@@ -401,7 +491,6 @@ class OpenRouterForecastBot(ForecastBot):
             The valid option names are:
 
             {question.options}
-
             When parsing the answer:
             - Every valid option must appear.
             - Use exactly the supplied option names.
@@ -411,7 +500,6 @@ class OpenRouterForecastBot(ForecastBot):
             - Do not invent options.
             """
         )
-
         predicted_option_list: PredictedOptionList = await structure_output(
             text_to_structure=reasoning,
             output_type=PredictedOptionList,
@@ -438,7 +526,6 @@ class OpenRouterForecastBot(ForecastBot):
         upper_bound_message, lower_bound_message = (
             self._create_upper_and_lower_bound_messages(question)
         )
-
         prompt = clean_indents(
             f"""
             You are a professional probabilistic forecaster.
@@ -457,7 +544,6 @@ class OpenRouterForecastBot(ForecastBot):
 
             UNITS:
             {question.unit_of_measure if question.unit_of_measure else "Not stated; infer carefully."}
-
             RESEARCH:
             {research}
 
@@ -469,7 +555,6 @@ class OpenRouterForecastBot(ForecastBot):
 
             QUESTION UPPER BOUND:
             {upper_bound_message}
-
             Consider:
             (a) The time remaining.
             (b) The current value or status quo.
@@ -481,7 +566,6 @@ class OpenRouterForecastBot(ForecastBot):
             (h) Unknown unknowns.
 
             Be appropriately uncertain.
-
             Formatting requirements:
             - Use the requested units.
             - Never use scientific notation.
@@ -496,7 +580,6 @@ class OpenRouterForecastBot(ForecastBot):
             Percentile 60: XX
             Percentile 80: XX
             Percentile 90: XX
-
             where XX is a numerical value in the requested units.
             """
         )
@@ -517,7 +600,6 @@ class OpenRouterForecastBot(ForecastBot):
 
             Units:
             {question.unit_of_measure}
-
             When parsing:
             - Values must be expressed in the correct units.
             - Convert scientific notation to ordinary numbers.
@@ -527,7 +609,6 @@ class OpenRouterForecastBot(ForecastBot):
             - Do not invent missing percentile values.
             """
         )
-
         percentile_list: list[Percentile] = await structure_output(
             reasoning,
             list[Percentile],
@@ -540,7 +621,6 @@ class OpenRouterForecastBot(ForecastBot):
             percentile_list,
             question,
         )
-
         return ReasonedPrediction(
             prediction_value=prediction,
             reasoning=reasoning,
@@ -555,7 +635,6 @@ class OpenRouterForecastBot(ForecastBot):
         question: DateQuestion,
         research: str,
     ) -> ReasonedPrediction[NumericDistribution]:
-
         upper_bound_message, lower_bound_message = (
             self._create_upper_and_lower_bound_messages(question)
         )
@@ -575,7 +654,6 @@ class OpenRouterForecastBot(ForecastBot):
 
             FINE PRINT:
             {question.fine_print}
-
             RESEARCH:
             {research}
 
@@ -587,7 +665,6 @@ class OpenRouterForecastBot(ForecastBot):
 
             QUESTION UPPER BOUND:
             {upper_bound_message}
-
             Consider:
             (a) The time remaining until the outcome is known.
             (b) The status quo / current trajectory.
@@ -596,7 +673,6 @@ class OpenRouterForecastBot(ForecastBot):
             (e) A plausible early-outcome scenario.
             (f) A plausible late-outcome scenario.
             (g) Unknown unknowns.
-
             Be appropriately uncertain. Good forecasters usually need wider
             date ranges than their first instinct suggests.
 
@@ -607,7 +683,6 @@ class OpenRouterForecastBot(ForecastBot):
             - Do not invent unsupported precision.
 
             Your final answer MUST contain exactly:
-
             Percentile 10: YYYY-MM-DD
             Percentile 20: YYYY-MM-DD
             Percentile 40: YYYY-MM-DD
@@ -624,13 +699,11 @@ class OpenRouterForecastBot(ForecastBot):
             question.page_url,
             reasoning[:1000],
         )
-
         parsing_instructions = clean_indents(
             f"""
             The question is a DATE question:
 
             {question.question_text}
-
             When parsing:
             - Parse each percentile value as an ISO date (YYYY-MM-DD).
             - If the target schema requires a numeric value, convert the
@@ -641,7 +714,6 @@ class OpenRouterForecastBot(ForecastBot):
             - Do not invent missing percentile values.
             """
         )
-
         percentile_list: list[Percentile] = await structure_output(
             reasoning,
             list[Percentile],
@@ -654,7 +726,6 @@ class OpenRouterForecastBot(ForecastBot):
             percentile_list,
             question,
         )
-
         return ReasonedPrediction(
             prediction_value=prediction,
             reasoning=reasoning,
@@ -687,7 +758,6 @@ class OpenRouterForecastBot(ForecastBot):
         child = await run_component(question.child, "child")
         yes = await run_component(question.question_yes, "child | parent=YES")
         no = await run_component(question.question_no, "child | parent=NO")
-
         prediction = ConditionalPrediction(
             parent=parent.prediction_value,
             child=child.prediction_value,
@@ -705,7 +775,6 @@ class OpenRouterForecastBot(ForecastBot):
 
             ## Child Conditional on Parent = YES
             {yes.reasoning}
-
             ## Child Conditional on Parent = NO
             {no.reasoning}
             """
@@ -732,7 +801,6 @@ class OpenRouterForecastBot(ForecastBot):
         DateQuestion does NOT have those attributes, so its actual
         upper_bound / lower_bound fields are used directly.
         """
-
         if isinstance(question, NumericQuestion):
             upper_bound_number = (
                 question.nominal_upper_bound
@@ -745,7 +813,6 @@ class OpenRouterForecastBot(ForecastBot):
                 if question.nominal_lower_bound is not None
                 else question.lower_bound
             )
-
             unit_of_measure = (
                 question.unit_of_measure
                 if question.unit_of_measure
@@ -756,13 +823,11 @@ class OpenRouterForecastBot(ForecastBot):
             upper_bound_number = question.upper_bound
             lower_bound_number = question.lower_bound
             unit_of_measure = "date"
-
         else:
             raise TypeError(
                 "Unsupported question type for bound messages: "
                 f"{type(question).__name__}"
             )
-
         if question.open_upper_bound:
             upper_bound_message = (
                 f"The question creator thinks the number is likely "
@@ -774,7 +839,6 @@ class OpenRouterForecastBot(ForecastBot):
                 f"The outcome cannot be higher than "
                 f"{upper_bound_number} {unit_of_measure}."
             )
-
         if question.open_lower_bound:
             lower_bound_message = (
                 f"The question creator thinks the number is likely "
@@ -799,5 +863,4 @@ class OpenRouterForecastBot(ForecastBot):
         Native structured-output support is deliberately used here rather
         than the Nemotron/Laguna pair used for research and reasoning.
         """
-
         return self.get_llm("parser", "llm")
