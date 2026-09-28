@@ -1,19 +1,23 @@
+```yaml
 name: Forecast on new AI tournament questions
 
 on:
   workflow_dispatch:
 
   schedule:
-    # Run every 20 minutes.
-    - cron: "7,27,47 * * * *"
-
-concurrency:
-  group: forecasting-bot-tournament
-  cancel-in-progress: false
+    # Check for new tournament questions every 10 minutes.
+    # Offset from the top of the hour to reduce GitHub scheduler congestion.
+    - cron: "7,17,27,37,47,57 * * * *"
 
 jobs:
   forecast_job:
     runs-on: ubuntu-latest
+
+    # Allow enough time for:
+    # - dependency installation
+    # - web research
+    # - OpenRouter model retries/fallbacks
+    # - forecasting multiple questions
     timeout-minutes: 180
 
     steps:
@@ -24,6 +28,7 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          cache: "pip"
 
       - name: Install Poetry
         uses: snok/install-poetry@v1
@@ -33,10 +38,10 @@ jobs:
           virtualenvs-in-project: true
           installer-parallel: true
 
-      - name: Fix lock file drift
+      - name: Refresh Poetry lock file
         run: poetry lock
 
-      - name: Install Poetry dependencies
+      - name: Install dependencies
         run: poetry install --no-interaction --no-root
 
       - name: Run forecasting bot
@@ -46,3 +51,4 @@ jobs:
 
         run: |
           poetry run python main.py --mode tournament
+```
