@@ -1,4 +1,3 @@
-```yaml
 name: Forecast on new AI tournament questions
 
 on:
@@ -51,4 +50,3 @@ jobs:
 
         run: |
           poetry run python main.py --mode tournament
-```
