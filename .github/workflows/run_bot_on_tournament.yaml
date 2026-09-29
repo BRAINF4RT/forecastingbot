@@ -4,19 +4,11 @@ on:
   workflow_dispatch:
 
   schedule:
-    # Check for new tournament questions every 10 minutes.
-    # Offset from the top of the hour to reduce GitHub scheduler congestion.
-    - cron: "7,17,27,37,47,57 * * * *"
+    - cron: "*/20 * * * *"
 
 jobs:
   forecast_job:
     runs-on: ubuntu-latest
-
-    # Allow enough time for:
-    # - dependency installation
-    # - web research
-    # - OpenRouter model retries/fallbacks
-    # - forecasting multiple questions
     timeout-minutes: 180
 
     steps:
@@ -40,13 +32,12 @@ jobs:
       - name: Refresh Poetry lock file
         run: poetry lock
 
-      - name: Install dependencies
+      - name: Install Poetry dependencies
         run: poetry install --no-interaction --no-root
 
       - name: Run forecasting bot
         env:
           METACULUS_TOKEN: ${{ secrets.METACULUS_TOKEN }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
-
         run: |
           poetry run python main.py --mode tournament
