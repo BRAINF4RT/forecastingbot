@@ -1,31 +1,47 @@
 # BRAINF4RT Metaculus Forecasting Bot
 
-A fully automated Metaculus forecasting bot built around **free OpenRouter models**, deterministic web research, resilient web scraping, and `forecasting-tools`.
+A fully automated Metaculus forecasting bot built around **free OpenRouter models**, deterministic web research, resilient web scraping, and `forecasting-tools`. It began as a fork of the official [Metaculus `metac-bot-template`](https://github.com/Metaculus/metac-bot-template) and has been substantially rewritten.
 
-The bot is designed for Metaculus forecasting tournaments and currently targets the **Fall FutureEval 2026 tournament**, the current MiniBench, and the Metaculus Cup.
+**Metaculus profile:** [metaculus.com/accounts/profile/277439](https://www.metaculus.com/accounts/profile/277439/)
 
-The entire LLM inference pipeline uses OpenRouter's `:free` model endpoints. There are **no paid LLM APIs or paid search APIs required**.
+The bot targets the **Fall FutureEval 2026 tournament**, the current MiniBench, and the Metaculus Cup.
 
-> **Status:** Active development
-> **Primary target:** Metaculus Fall FutureEval 2026
 > **Language:** Python 3.11+
 > **Inference:** OpenRouter free models
 > **Framework:** `forecasting-tools`
+> **Paid APIs required:** none for the primary pipeline (see [Free-only design](#free-only-design))
 
 ---
 
-## What makes this bot different?
+## Contents
 
-This bot deliberately avoids relying on an LLM to invent web-search queries.
+- [What makes this bot different](#what-makes-this-bot-different)
+- [Supported question types](#supported-question-types)
+- [Forecasting pipeline](#forecasting-pipeline)
+- [Model configuration](#model-configuration)
+- [Failure handling](#failure-handling)
+- [Repository structure](#repository-structure)
+- [Running the bot](#running-the-bot)
+- [Run modes](#run-modes)
+- [GitHub Actions](#github-actions)
+- [Reviewing bot performance](#reviewing-bot-performance)
+- [Optional integrations](#optional-integrations)
+- [Free-only design](#free-only-design)
+- [Known issues](#known-issues)
+- [Credits](#credits)
 
-Instead, it uses a deterministic query-generation strategy:
+---
+
+## What makes this bot different
+
+The research pipeline deliberately avoids using an LLM to invent web-search queries. Query generation is **fixed and deterministic**:
 
 ```text
 Metaculus question
         │
-        ├── Original question verbatim
-        ├── First 8 words
-        └── First 6 words + "latest news"
+        ├── Original question, verbatim
+        ├── First 8 words (only if the question is >6 words)
+        └── First 6 words + "latest news" (only if the question is >6 words)
         │
         ▼
    DDGS web search
@@ -48,529 +64,205 @@ Metaculus question
         └── DDGS indexed snippets
         │
         ▼
- Research summary
+ Research summary (LLM)
         │
         ▼
- Forecast/reasoning LLMs
-        │
-        ├── Nemotron 3 Ultra
-        ├── Laguna S 2.1
-        └── Qwen3.8 27B
+ Forecast reasoning (LLM)
         │
         ▼
- Structured-output parser
-        │
-        ├── Qwen3.8 27B
-        ├── Gemma 4 31B
-        └── Nemotron 3 Ultra
+ Structured-output parsing (LLM)
         │
         ▼
- forecasting-tools
-        │
-        ▼
- Metaculus
+ forecasting-tools → Metaculus
 ```
 
-The original Metaculus question is **always included as the first search query**. Search-query generation does not use an LLM, and there is no automatic LLM query rewriting or speculative query expansion.
+The original question is always query #1, exactly as written. There is no LLM-driven query rewriting, expansion, or retry-query generation — see [`research/pipeline.py`](research/pipeline.py).
 
 ---
 
-# Features
+## Supported question types
 
-### 🧠 Multi-model forecasting
+| Question type    | Forecast format                    |
+| ----------------- | ----------------------------------- |
+| Binary            | Probability                         |
+| Multiple choice   | Probability for every option        |
+| Numeric           | Percentile distribution             |
+| Date              | Date percentile distribution        |
+| Conditional       | Parent/child conditional forecasts  |
 
-The bot uses a fallback chain of free OpenRouter models for research summarisation and forecasting reasoning:
-
-1. `nvidia/nemotron-3-ultra-550b-a55b:free`
-2. `poolside/laguna-s-2.1:free`
-3. `qwen/qwen3.8-27b:free`
-
-If a model fails, the next model is tried automatically.
-
-The parser uses a separate chain because the reasoning models do not reliably provide the structured-output behaviour required by `forecasting-tools`:
-
-1. `qwen/qwen3.8-27b:free`
-2. `google/gemma-4-31b-it:free`
-3. `nvidia/nemotron-3-ultra-550b-a55b:free`
-
-These model assignments are explicitly validated during startup so that the bot does not silently drift onto a paid or unintended model.
+The conditional implementation uses `forecasting-tools`' own semantics and can reuse an existing valid parent/child forecast where appropriate.
 
 ---
 
-### 🌐 Free web research
+## Forecasting pipeline
 
-Research is performed without paid search APIs.
+### 1. Question retrieval
 
-The bot uses `DDGS` and searches multiple available backends:
+`forecasting-tools`' `MetaculusClient` fetches the question and its full metadata (text, type, background, resolution criteria, fine print, options, units, numeric/date bounds, conditional structure, URL).
 
-* Brave
-* Google
-* Bing
-* DuckDuckGo
-* Yahoo
-* Wikipedia
+### 2. Deterministic search-query generation — [`research/pipeline.py`](research/pipeline.py)
 
-Search results are deduplicated, ranked for relevance, and then scraped where possible.
+`build_search_queries()` produces up to three queries, described above. `resolution_criteria`, `background`, and a `retry` flag remain in its signature for backward compatibility but are not used — there is no deterministic-or-otherwise query expansion beyond the three fixed rules.
 
----
+### 3. Parallel web search — [`research/scraper.py`](research/scraper.py)
 
-### 🕸️ Resilient scraping
+The deduplicated queries are searched concurrently via `DDGS` across six backends (Brave, Google, Bing, DuckDuckGo, Yahoo, Wikipedia). Up to 4 results per query are requested.
 
-A source is processed through several fallback layers:
+### 4. Relevance filtering + extraction
+
+Each candidate is scored with a deterministic relevance function (meaningful-token overlap, title vs. body weighting, bigram matches). Confirmed `404`/`410` and other soft-dead pages are rejected rather than treated as evidence. Surviving sources are scraped through a fallback chain:
 
 ```text
-HTTP request
-     │
-     ▼
-Trafilatura
-     │
-     ├── success → use extracted article
-     │
-     ▼
-BeautifulSoup
-     │
-     ├── success → use extracted paragraphs
-     │
-     ▼
-DDGS indexed snippet
-     │
-     ▼
-Original search-engine snippet
+HTTP request → Trafilatura → BeautifulSoup → DDGS indexed snippet
 ```
 
-This means the bot can still obtain useful evidence from websites that:
+Metaculus URLs are **not** filtered out of research results — a Metaculus page can itself be useful context.
 
-* block direct scraping
-* return bot-check pages
-* fail to extract cleanly
-* have temporarily inaccessible pages
-* expose useful information only through search-engine indexes
+### 5. Research summarisation
 
-Confirmed HTTP `404`/`410` pages are rejected rather than being treated as evidence. The scraper also detects several classes of soft-dead pages.
+`clients/openrouter_helper.py`'s `summarize_research()` receives the full question context (not just the title) and is instructed to stick to facts relevant to the resolution criteria, preserve dates/numbers/sources, and avoid producing the actual forecast itself. The final research context returned to the forecaster combines this summary with a slice of the raw retrieved text.
 
----
+### 6. Forecast reasoning
 
-### 🎯 Relevance filtering
+`generate_forecast_reasoning()` (also in `clients/openrouter_helper.py`) receives the question, background, resolution criteria, fine print, research, and any relevant bounds/options/units, with prompts adapted per question type (binary probability, per-option probabilities, percentile distributions, etc.).
 
-Search results are not simply dumped into the LLM.
+### 7. Structured-output parsing
 
-The scraper calculates a deterministic relevance score using:
-
-* meaningful token overlap
-* title matches
-* body matches
-* matching word pairs/bigrams
-
-Titles receive greater weight than body text.
-
-Sources below the relevance threshold can be discarded when enough stronger candidates are available.
+The reasoning model's free-text output is converted into a typed `forecasting-tools` prediction via `structure_output()`, using a dedicated **parser** LLM chain (see below) rather than requiring the reasoning model itself to emit clean JSON.
 
 ---
 
-### 🔗 Metaculus URLs are allowed
+## Model configuration
 
-The bot **does not filter out Metaculus URLs**.
+There are two separate places models are configured, because two different code paths talk to OpenRouter.
 
-This is intentional. A Metaculus page can itself contain relevant information, forecasts, question context, or other material useful to the research process.
+### Direct OpenRouter client — `clients/openrouter_helper.py`
 
----
-
-# Supported question types
-
-The current bot handles:
-
-| Question type   | Forecast format                    |
-| --------------- | ---------------------------------- |
-| Binary          | Probability                        |
-| Multiple choice | Probability for every option       |
-| Numeric         | Percentile distribution            |
-| Date            | Date percentile distribution       |
-| Conditional     | Parent/child conditional forecasts |
-
-The conditional implementation uses the existing `forecasting-tools` semantics and can reuse an existing valid parent/child forecast where appropriate.
-
----
-
-# Forecasting pipeline
-
-## 1. Metaculus question retrieval
-
-`forecasting-tools` obtains the question from Metaculus.
-
-The bot preserves the important question metadata, including:
-
-* question text
-* question type
-* background information
-* resolution criteria
-* fine print
-* options
-* units
-* numeric bounds
-* date bounds
-* conditional structure
-* Metaculus URL
-
-The complete question context is made available to the research summarisation model.
-
----
-
-## 2. Deterministic search-query generation
-
-For a question with more than six words, up to three queries are generated:
+Used for research summarisation and forecast reasoning, called directly via `httpx` (not through `forecasting-tools`):
 
 ```text
-1. Exact question text
-
-2. First 8 words
-
-3. First 6 words + "latest news"
+PRIMARY_MODEL  = nvidia/nemotron-3-ultra-550b-a55b:free
+FALLBACK_MODEL = poolside/laguna-s-2.1:free
+THIRD_MODEL    = qwen/qwen3.8-27b:free
 ```
 
-The first query is the **exact original question**.
+This client implements its own retry/backoff for retryable HTTP statuses (`408, 409, 425, 429, 500, 502, 503, 504`), and limits itself to `_OPENROUTER_CONCURRENCY = 1` concurrent request.
 
-For example:
+### `forecasting-tools` LLM chain — `bot.py`
+
+`forecasting-tools` requires a `GeneralLlm`-compatible interface, so `bot.py` wraps the above models (with an `openrouter/` LiteLLM routing prefix) plus a dedicated parser chain, via the custom `FallbackGeneralLlm` class:
 
 ```text
-Will country X join organisation Y before 2030?
+default / summarizer / researcher:
+    openrouter/nvidia/nemotron-3-ultra-550b-a55b:free
+        → openrouter/poolside/laguna-s-2.1:free
+            → qwen/qwen3.8-27b:free   (see "Known issues" below)
+
+parser:
+    openrouter/qwen/qwen3.8-27b:free
+        → openrouter/google/gemma-4-31b-it:free
+            → openrouter/nvidia/nemotron-3-ultra-550b-a55b:free
 ```
 
-could produce:
+The parser chain is intentionally separate: the reasoning models don't reliably produce the structured output `forecasting-tools.structure_output()` needs, so parsing is delegated to a different model rotation optimized for that.
 
-```text
-Will country X join organisation Y before 2030?
+`FallbackGeneralLlm.invoke()`:
 
-Will country X join organisation Y before
+- Tries each model in the chain in order.
+- If **every** model in the chain fails and all failures are rate-limit errors specifically, the whole chain is retried with linear backoff (up to 3 attempts total).
+- If any failure isn't a rate-limit error, or the retries are exhausted, it raises with every model's error attached.
+- Structured-output validation sampling is set to 1 (`_structure_output_validation_samples`), since each sample is a full extra parser call and the parser models share OpenRouter's free-tier rate-limit pool.
 
-Will country X join organisation latest news
-```
+Both `main.py` (`validate_openrouter_configuration()`) and `bot.py` explicitly assert the exact model IDs at startup, so the bot fails loudly rather than silently drifting onto an unintended (or paid) model.
 
-No LLM is involved in this stage.
+### Unused/experimental client — `clients/hf_vibethinker.py`
+
+A separate client exists for calling `WeiboAI/VibeThinker-3B` via Hugging Face Inference Providers (routed through Featherless AI), with its own retry/backoff logic and an `HF_TOKEN` requirement. **It is not currently wired into `bot.py`** — `bot.py` imports `generate_forecast_reasoning` from `clients/openrouter_helper.py`, not from this module. It's present as an alternate forecasting-brain option, not part of the active pipeline.
 
 ---
 
-## 3. Parallel web searching
+## Failure handling
 
-The generated queries are searched concurrently.
-
-Each query can retrieve multiple sources, which are then deduplicated and ranked.
-
-The research pipeline currently requests up to four results per query.
-
----
-
-## 4. Source extraction
-
-Each selected source is passed through the scraping pipeline.
-
-The resulting `ScrapedSource` records metadata such as:
-
-* search query
-* title
-* URL
-* original snippet
-* extracted content
-* extraction method
-* search backend
-* relevance score
-
-This information is retained when the research is formatted for the LLM.
+- **Per-request retries:** the direct OpenRouter client retries retryable HTTP statuses with bounded exponential backoff (up to 3 attempts per model).
+- **Model fallback:** each chain (research/reasoning and parser) tries its models in order.
+- **Whole-chain retry on rate limiting:** if every model in a chain is rate-limited simultaneously (common on OpenRouter's shared free-tier pool), the entire chain is retried with backoff rather than failing immediately.
+- **Concurrency limits:** deliberately conservative — 1 concurrent request on the direct OpenRouter client, a small semaphore (`_GENERAL_LLM_SEMAPHORE`) on the `forecasting-tools` LLM path. Free endpoints get heavily rate-limited under higher concurrency, so this trades some throughput for reliability.
+- **No paid fallback:** if every configured free model fails, the question fails. This is intentional — the bot does not silently switch to a paid model.
 
 ---
 
-## 5. Research summarisation
-
-The retrieved material is passed to the research model.
-
-The research model receives the **complete Metaculus question context**, not just the title.
-
-It is explicitly instructed to:
-
-* identify information relevant to the exact question
-* focus on the resolution criteria
-* preserve important dates and numbers
-* identify named sources
-* preserve uncertainty
-* identify meaningful disagreement
-* avoid inventing facts
-* avoid producing the actual forecast
-
-The research model therefore acts as a research assistant rather than the final forecaster.
-
-The final research context contains both the summary and a portion of the raw retrieved research.
-
----
-
-# 6. Forecast reasoning
-
-The forecasting model receives:
-
-* the Metaculus question
-* background
-* resolution criteria
-* fine print
-* research
-* relevant bounds/options/units
-* current date
-
-The forecasting prompts are adapted to the question type.
-
-### Binary
-
-The model produces a probability between 0 and 100%.
-
-It is instructed to consider:
-
-* time remaining
-* status quo
-* Yes scenario
-* No scenario
-* current research
-
-The parsed probability is constrained to the range `0.01–0.99` before being returned to `forecasting-tools`.
-
-### Multiple choice
-
-The model produces a probability for every available option.
-
-The parser is explicitly instructed to:
-
-* use only valid option names
-* remove accidental `"Option"` prefixes
-* retain options with `0%`
-
-### Numeric
-
-The model produces a percentile distribution:
-
-```text
-Percentile 10
-Percentile 20
-Percentile 40
-Percentile 60
-Percentile 80
-Percentile 90
-```
-
-The prompt explicitly distinguishes question bounds from actual expert/market evidence. Question metadata is not allowed to masquerade as an independent forecast.
-
-### Date
-
-Date questions use the same percentile structure, but dates are converted into timestamps for `forecasting-tools`.
-
-The model is instructed to keep the percentiles chronologically ordered.
-
-### Conditional
-
-Conditional questions are decomposed into:
-
-```text
-Parent
-Child
-Child | Parent = YES
-Child | Parent = NO
-```
-
-Existing valid parent/child forecasts can be reused rather than unnecessarily re-forecasting the same component.
-
----
-
-# 7. Structured-output parsing
-
-The reasoning model is not required to return perfect machine-readable JSON.
-
-Instead:
-
-```text
-LLM reasoning
-      │
-      ▼
-forecasting-tools structure_output()
-      │
-      ▼
-Typed prediction
-```
-
-A dedicated parser LLM converts the forecaster's final response into the appropriate `forecasting-tools` data structure.
-
-The parser chain is:
-
-```text
-Qwen3.8 27B
-      ↓
-Gemma 4 31B
-      ↓
-Nemotron 3 Ultra
-```
-
-The parser uses a low temperature and validation sampling to reduce formatting errors.
-
----
-
-# Model architecture
-
-There are effectively **two LLM systems** in the bot.
-
-## Research / forecasting chain
-
-Used for:
-
-* research summarisation
-* forecast reasoning
-
-```text
-Nemotron 3 Ultra :free
-        ↓
-Laguna S 2.1 :free
-        ↓
-Qwen3.8 27B :free
-```
-
-These requests are made directly against the OpenRouter chat-completions API using `httpx`.
-
----
-
-## Structured-output parser chain
-
-Used only for converting generated reasoning into `forecasting-tools` structured predictions.
-
-```text
-Qwen3.8 27B :free
-        ↓
-Gemma 4 31B :free
-        ↓
-Nemotron 3 Ultra :free
-```
-
-This path uses the `forecasting-tools`/LiteLLM interface because `structure_output()` requires a compatible `GeneralLlm`.
-
----
-
-# Failure handling
-
-Free model endpoints are inherently less predictable than paid endpoints, so the bot has several layers of resilience.
-
-## OpenRouter retries
-
-Retryable HTTP statuses include:
-
-```text
-408
-409
-425
-429
-500
-502
-503
-504
-```
-
-Requests use bounded exponential backoff, up to three attempts per model.
-
----
-
-## Model fallback
-
-If a model continues failing after its retries:
-
-```text
-Nemotron
-   ↓ failure
-Laguna
-   ↓ failure
-Qwen
-   ↓ failure
-question fails
-```
-
-The same principle is used for structured-output parsing, with its own parser-specific chain.
-
----
-
-## Concurrency limiting
-
-The direct OpenRouter client currently allows one OpenRouter request at a time:
-
-```python
-_OPENROUTER_CONCURRENCY = 1
-```
-
-The `forecasting-tools` LLM path has its own semaphore with a concurrency of two.
-
-These are separate concurrency pools because the bot has two different OpenRouter access paths.
-
-The conservative limits are intentional: free OpenRouter endpoints can become heavily rate-limited, and increasing concurrency can turn throughput improvements into a large number of `429` responses.
-
----
-
-# Repository structure
+## Repository structure
 
 ```text
 forecastingbot/
 │
 ├── .claude/
 │   └── skills/
-│       └── review-bot/
+│       └── review-bot/            # Claude Code skill for post-hoc performance review
 │
 ├── .github/
 │   └── workflows/
-│       └── GitHub Actions workflows
+│       ├── run_bot_on_tournament.yaml     # Fall FutureEval 2026 + MiniBench, every 20 min
+│       ├── run_bot_on_metaculus_cup.yaml  # Metaculus Cup, every 2 days
+│       ├── test_bot.yaml                  # Manual-only, dry-run against bot-testing-area
+│       └── review_bot.yaml                # Weekly scoring review (off by default)
 │
 ├── clients/
-│   └── openrouter_helper.py
+│   ├── openrouter_helper.py       # Direct OpenRouter client: retries, fallback, summarisation
+│   ├── hf_vibethinker.py          # Alternate HF-based reasoning client (not currently wired in)
+│   └── test                       # stray placeholder file, not a real test suite
 │
 ├── research/
-│   ├── pipeline.py
-│   └── scraper.py
+│   ├── pipeline.py                # Deterministic query generation + research orchestration
+│   ├── scraper.py                 # DDGS search, relevance scoring, scraping fallback chain
+│   └── test                       # stray placeholder file, not a real test suite
 │
-├── bot.py
-├── bot_helpers.py
-├── main.py
-├── main_with_no_framework.py
+├── integrations/
+│   ├── README.md                  # Optional third-party integrations (see below)
+│   └── main_lightningrod_eval.py  # LightningRod SDK example: news → questions → eval
+│
+├── bot.py                         # OpenRouterForecastBot, FallbackGeneralLlm, per-type forecasting
+├── bot_helpers.py                 # Env checks, logging setup, run-summary banners
+├── main.py                        # CLI entry point, mode dispatch, startup model validation
+├── main_with_no_framework.py      # Standalone reference bot (OpenAI + AskNews/Perplexity), not the active pipeline
 │
 ├── .env.template
 ├── .gitignore
-├── DEPENDENCIES.md
+├── DEPENDENCIES.md                # Notes on adding this bot's deps to a fresh template fork
 ├── poetry.lock
 ├── pyproject.toml
-├── requirements.txt
+├── requirements.txt               # pip alternative to Poetry
 └── README.md
 ```
 
-The core components are:
-
-| File                           | Purpose                                                                      |
-| ------------------------------ | ---------------------------------------------------------------------------- |
-| `main.py`                      | CLI entry point and tournament orchestration                                 |
-| `bot.py`                       | Main `ForecastBot` implementation and question-type forecasting              |
-| `bot_helpers.py`               | Environment checks, logging helpers and run summaries                        |
-| `clients/openrouter_helper.py` | Direct OpenRouter client, retries and model fallback                         |
-| `research/pipeline.py`         | Deterministic query generation and research orchestration                    |
-| `research/scraper.py`          | DDGS search, source ranking, scraping and fallback extraction                |
-| `main_with_no_framework.py`    | Standalone/reference implementation without the normal framework entry point |
-| `.env.template`                | Environment-variable template                                                |
-| `DEPENDENCIES.md`              | Dependency/integration documentation                                         |
-| `.github/workflows/`           | Automated GitHub Actions execution                                           |
-
----
-
-# Running the bot
-
-## Requirements
-
-* Python 3.11+
-* Poetry **or** pip
-* A Metaculus API token
-* An OpenRouter API key
-* Internet access
-
-The project declares Python `^3.11` and depends on `forecasting-tools`, `ddgs`, `trafilatura`, `beautifulsoup4`, `httpx`, `python-dotenv`, and related packages.
+| File                              | Purpose                                                              |
+| ---------------------------------- | ---------------------------------------------------------------------- |
+| `main.py`                          | CLI entry point, mode dispatch, startup model-configuration validation |
+| `bot.py`                           | `OpenRouterForecastBot`, `FallbackGeneralLlm`, per-question-type forecasting logic |
+| `bot_helpers.py`                   | Environment checks, noisy-dependency silencing, run banners            |
+| `clients/openrouter_helper.py`     | Direct OpenRouter client: retries, model fallback, research summarisation, forecast reasoning |
+| `clients/hf_vibethinker.py`        | Alternate HF Inference Providers client (currently unused by `bot.py`) |
+| `research/pipeline.py`             | Deterministic query generation + research orchestration                |
+| `research/scraper.py`              | `DDGS` search, source ranking/relevance, scraping fallback chain       |
+| `main_with_no_framework.py`        | Standalone reference implementation, not part of the active bot        |
+| `integrations/`                    | Optional third-party tooling (LightningRod SDK, bot-review)            |
+| `.claude/skills/review-bot/`       | Claude Code skill that drives read-only post-hoc performance review    |
+| `.env.template`                    | Environment-variable template                                          |
+| `DEPENDENCIES.md`                  | How to add this bot's deps to a fresh `metac-bot-template` fork        |
+| `.github/workflows/`               | GitHub Actions automation                                              |
 
 ---
 
-## Environment variables
+## Running the bot
 
-Create a `.env` file from the supplied template:
+### Requirements
+
+- Python 3.11+
+- Poetry **or** pip
+- A Metaculus API token
+- An OpenRouter API key
+
+### Environment variables
 
 ```bash
 cp .env.template .env
@@ -583,132 +275,98 @@ METACULUS_TOKEN=your_metaculus_token
 OPENROUTER_API_KEY=your_openrouter_api_key
 ```
 
-The bot performs explicit startup validation and refuses to run if the required credentials or expected model configuration are missing.
+`main.py` validates both the credentials and the exact expected model configuration at startup, and exits before making any API calls if either is wrong.
 
----
-
-# Installation
-
-## Poetry
+### Installation — Poetry
 
 ```bash
 poetry lock
 poetry install
-```
-
-Then:
-
-```bash
-cp .env.template .env
-```
-
-Fill in the credentials and run:
-
-```bash
+cp .env.template .env   # then fill in credentials
 poetry run python main.py --mode test_questions
 ```
 
----
-
-## pip
+### Installation — pip
 
 ```bash
 pip install -r requirements.txt
-```
-
-Then:
-
-```bash
-cp .env.template .env
-```
-
-and:
-
-```bash
+cp .env.template .env   # then fill in credentials
 python main.py --mode test_questions
 ```
 
 ---
 
-# Run modes
-
-## Tournament
+## Run modes
 
 ```bash
-poetry run python main.py --mode tournament
+poetry run python main.py --mode <mode>
 ```
 
-This runs the configured Fall FutureEval 2026 tournament and the current MiniBench.
+| Mode | What it does | Publishes? | Skips already-forecasted questions? |
+| ---- | ------------- | :--------: | :----------------------------------: |
+| `tournament` (default) | Fall FutureEval 2026 + current MiniBench | ✅ | ✅ |
+| `metaculus_cup` | Current Metaculus Cup | ✅ | ❌ |
+| `test_questions` | `bot-testing-area` (all supported question types) | ❌ (dry run) | ❌ |
 
-Previously forecast questions are skipped in this mode.
+`test_questions` mode is meant to exercise every supported question-type path (binary, multiple choice, numeric, date, conditional) in one CI run — it currently forecasts every question the API returns for `bot-testing-area`, not a single sampled question.
 
 ---
 
-## Metaculus Cup
+## GitHub Actions
+
+| Workflow | Trigger | Purpose |
+| -------- | ------- | ------- |
+| `run_bot_on_tournament.yaml` | `schedule: */20 * * * *` + manual | Main tournament forecasting run |
+| `run_bot_on_metaculus_cup.yaml` | `schedule: 0 0 */2 * *` (every 2 days) + manual | Metaculus Cup forecasting run |
+| `test_bot.yaml` | Manual only | Dry-run against `bot-testing-area`, no publishing |
+| `review_bot.yaml` | `schedule: 0 6 * * 1` (weekly) + manual | Read-only performance review; **off by default** — set repo variable `REVIEW_BOT_ENABLED=true` to enable the schedule |
+
+Required repository secrets: `METACULUS_TOKEN`, `OPENROUTER_API_KEY`. `test_bot.yaml` additionally references several optional integration secrets (`PERPLEXITY_API_KEY`, `EXA_API_KEY`, `ASKNEWS_CLIENT_ID`, `ASKNEWS_SECRET`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`) that the core DDGS-based research path does not actually require.
+
+> **Note on scheduling reliability:** GitHub's `schedule` trigger is best-effort, not real-time — very frequent cron intervals (like every 20 minutes) can be delayed or dropped for hours during platform load, especially on public repos. If a tournament deadline is time-sensitive, consider triggering `run_bot_on_tournament.yaml`'s `workflow_dispatch` externally (e.g. via a third-party cron service calling the GitHub Actions `dispatches` API) rather than relying on the `schedule` trigger alone.
+
+---
+
+## Reviewing bot performance
+
+A read-only, no-LLM-spend way to see how the bot's *already-resolved* forecasts scored, via the optional `metaculus-bot-review` package:
 
 ```bash
-poetry run python main.py --mode metaculus_cup
+poetry install --with integrations
+poetry run bot-review review --tournament <slug-or-id> --output review.json --summary review.md
+poetry run bot-review review --resolved-since 30
 ```
 
-This runs the current Metaculus Cup.
-
-Unlike the normal tournament mode, previously forecast questions are not skipped.
-
----
-
-## Test questions
+`review.md` gives rank, questions scored, and best/worst questions. `review.json` adds per-question detail including every forecaster's prediction on every run. Pull specific reasoning without reading a whole report:
 
 ```bash
-poetry run python main.py --mode test_questions
+poetry run bot-review show <POST_ID> --section research
+poetry run bot-review show <POST_ID> --forecaster R1:F3
 ```
 
-This runs against Metaculus':
+Two things build on this:
 
-```text
-bot-testing-area
-```
-
-The test mode does **not publish forecasts**.
-
-The testing tournament contains examples of the supported question structures, allowing the CI/test run to exercise:
-
-* binary
-* multiple choice
-* numeric
-* date
-* conditional
-
-forecasting paths.
+- **`.github/workflows/review_bot.yaml`** — runs it weekly and attaches `review.json`/`review.md` to the run. Off by default (see the workflow table above).
+- **`.claude/skills/review-bot/SKILL.md`** — a Claude Code skill that drives the whole diagnose-and-write-up loop. It's strictly read-only: it will not run the bot or change code without asking first.
 
 ---
 
-# GitHub Actions
+## Optional integrations
 
-The repository includes GitHub Actions automation for running the bot remotely.
+`poetry install --with integrations` pulls in an optional dependency group not needed for core forecasting:
 
-The intended setup is to provide the required credentials as repository secrets:
+- **[LightningRod SDK](integrations/main_lightningrod_eval.py)** — generates forecasting questions from news sources (e.g. Google News) for benchmarking/training purposes. Needs `LIGHTNINGROD_API_KEY`. Unrelated to the bot's own forecasting pipeline.
+- **[metaculus-bot-review](https://github.com/LouisP96/metaculus-bot-review)** — see [Reviewing bot performance](#reviewing-bot-performance) above.
 
-```text
-METACULUS_TOKEN
-OPENROUTER_API_KEY
-```
-
-This allows tournament runs to occur without storing credentials in the repository.
-
-The bot itself also performs configuration validation before starting, including checking that the configured model chain matches the expected free models.
+See [`integrations/README.md`](integrations/README.md) for details.
 
 ---
 
-# Free-only design
+## Free-only design
 
-One of the main goals of this project is keeping the complete AI forecasting pipeline accessible without paid inference services.
+The core forecasting pipeline uses only free-tier services:
 
-The bot currently uses:
-
-### LLM inference
-
-OpenRouter `:free` models:
-
+**LLM inference** (OpenRouter `:free` models):
 ```text
 nvidia/nemotron-3-ultra-550b-a55b:free
 poolside/laguna-s-2.1:free
@@ -716,208 +374,30 @@ qwen/qwen3.8-27b:free
 google/gemma-4-31b-it:free
 ```
 
-### Search
+**Search:** `DDGS` across Brave, Google, Bing, DuckDuckGo, Yahoo, Wikipedia — no paid search API.
 
-`DDGS`:
+**Extraction:** `requests`, Trafilatura, BeautifulSoup, DDGS indexed snippets.
 
-```text
-Brave
-Google
-Bing
-DuckDuckGo
-Yahoo
-Wikipedia
-```
+No paid OpenAI, Anthropic, Google, Perplexity, or news-API inference/search is required for the core pipeline. An OpenRouter API key is still required to access the free model endpoints, and free-tier availability/rate limits can change independently of this repository.
 
-### Extraction
-
-```text
-requests
-Trafilatura
-BeautifulSoup
-DDGS indexed snippets
-```
-
-There is therefore no dependency on:
-
-* paid OpenAI inference
-* paid Anthropic inference
-* paid Google inference
-* paid Perplexity search
-* paid Google Search APIs
-* paid news APIs
-
-The OpenRouter API key is still required for access to the free model endpoints.
-
-> **Important:** "free" refers to the model endpoints selected by this repository. Availability and rate limits of free OpenRouter models can change independently of this project.
+`main_with_no_framework.py` and the optional integrations (LightningRod, AskNews, Perplexity) are exceptions to this — they're reference material and opt-in tooling, not part of the default pipeline.
 
 ---
 
-# Why deterministic search queries?
+## Known issues
 
-Earlier versions of the bot experimented with LLM-generated search queries.
-
-The current implementation intentionally does not do this.
-
-The research pipeline guarantees that the original Metaculus question is searched exactly as written before adding two deterministic variants.
-
-This has several advantages:
-
-* the original question cannot accidentally disappear
-* query generation is reproducible
-* the bot cannot hallucinate search terms
-* query generation does not consume an additional LLM call
-* debugging is substantially easier
-* behaviour is less dependent on whichever model happens to be available
-
-The research system therefore separates **retrieval mechanics** from **LLM reasoning**.
+- **`THIRD_MODEL` third-fallback prefix:** `THIRD_MODEL` in `clients/openrouter_helper.py` is defined bare (`qwen/qwen3.8-27b:free`, no `openrouter/` prefix) for use by the direct-httpx client, which is correct for that path. However, `bot.py`'s `default`/`summarizer`/`researcher` LLM purposes pass this same bare value straight through as their `third_model` to `FallbackGeneralLlm`, which goes through LiteLLM — LiteLLM requires the `openrouter/` prefix to route correctly. If both the primary and fallback models in those three chains are rate-limited simultaneously, the third-fallback call will fail with `litellm.BadRequestError: LLM Provider NOT provided` instead of succeeding. This was already fixed specifically for the **parser** chain (`PARSER_THIRD_LLM` is explicitly set to the fully-qualified `openrouter/nvidia/...` string with a comment explaining why), but the same fix hasn't yet been applied to the `default`/`summarizer`/`researcher` chains.
+- **`test_questions` mode forecasts every question in `bot-testing-area`**, not a single one — if `bot-testing-area` grows, so does the runtime and API-call volume of `test_bot.yaml`.
+- **`run_bot_on_tournament.yaml` has no `concurrency` group**, unlike `run_bot_on_metaculus_cup.yaml` and `review_bot.yaml`. If a run is still in progress when the next scheduled trigger fires, they can run concurrently.
 
 ---
 
-# Why two separate OpenRouter paths?
+## Credits
 
-The bot deliberately has two different ways of talking to OpenRouter.
+Forked from the official [Metaculus `metac-bot-template`](https://github.com/Metaculus/metac-bot-template), which retains the `forecasting-tools` ([Metaculus/forecasting-tools](https://github.com/Metaculus/forecasting-tools)) architecture and `ForecastBot` interface. The research, model, fallback, scraping, and orchestration layers have been substantially rewritten for this bot's free-only, deterministic-query design.
 
-### Direct client
+Development and debugging assistance was provided by ChatGPT and Claude, used as coding/research assistants throughout.
 
-`clients/openrouter_helper.py`
-
-Used for:
-
-* research summarisation
-* forecast reasoning
-
-It uses `httpx` directly and implements its own retry/fallback system.
-
-### forecasting-tools LLM interface
-
-`bot.py`
-
-Used for:
-
-* structured prediction parsing
-
-This is required because `forecasting-tools.structure_output()` expects a `GeneralLlm` compatible implementation.
-
-Keeping these systems separate allows the bot to use one model chain for reasoning and a different chain optimized for structured output.
-
----
-
-# Current limitations
-
-### Free-model availability
-
-All inference models are free OpenRouter endpoints.
-
-They can therefore experience:
-
-* rate limiting
-* temporary provider failures
-* overloaded providers
-* model availability changes
-
-The bot has retries and fallbacks, but it cannot guarantee that every free endpoint will always be available.
-
----
-
-### Sequential request pressure
-
-The bot intentionally keeps OpenRouter concurrency conservative.
-
-Increasing concurrency may increase throughput, but can also substantially increase `429` responses from free providers.
-
----
-
-### Model roster can change
-
-OpenRouter's free model roster is not permanent.
-
-The repository currently locks itself to specific model IDs and validates those IDs at startup.
-
-If a free model disappears or changes availability, the configuration will need to be updated deliberately rather than silently switching models.
-
----
-
-### No paid fallback
-
-If all configured free models fail, the question fails rather than silently switching to a paid model.
-
-This is intentional.
-
----
-
-# Configuration philosophy
-
-The project intentionally prefers explicit configuration over hidden framework defaults.
-
-`OpenRouterForecastBot` explicitly configures the LLM purposes it uses so `forecasting-tools` cannot silently select a different default model.
-
-Likewise, `main.py` checks that the expected model IDs are still configured before starting.
-
-This is particularly important for a competition bot where accidentally switching from a free model to a paid model would violate the project's design goal.
-
----
-
-# Based on Metaculus' bot template
-
-This repository began as a fork of the official:
-
-**Metaculus `metac-bot-template`**
-
-The current implementation retains the `forecasting-tools` architecture and `ForecastBot` interface, while substantially replacing the research, model, fallback, scraping, and orchestration layers.
-
-Official framework:
-
-https://github.com/Metaculus/forecasting-tools
-
-Metaculus bot template:
-
-https://github.com/Metaculus/metac-bot-template
-
----
-
-# Development
-
-The project is primarily Python and uses Poetry for dependency management.
-
-Core dependencies include:
-
-```text
-Python 3.11+
-forecasting-tools
-httpx
-ddgs
-trafilatura
-beautifulsoup4
-requests
-python-dotenv
-```
-
-See:
-
-```text
-pyproject.toml
-requirements.txt
-DEPENDENCIES.md
-```
-
-for the current dependency definitions.
-
----
-
-# Credits
-
-This project was developed from the Metaculus bot template and has been substantially modified for this forecasting system.
-
-Development and debugging assistance was provided by:
-
-* **ChatGPT**
-* **Claude**
-
-Both were used as coding/research assistants during the development of the bot's forecasting pipeline, fallback architecture, web-research system, and reliability improvements.
-
----
-
-# License
+## License
 
 See the repository's license and the licenses of its upstream dependencies for applicable terms.
