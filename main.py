@@ -157,7 +157,7 @@ async def _run_forecasting_async(
         bot.skip_previously_forecasted_questions = False
 
         return await bot.forecast_on_tournament(
-            client.CURRENT_METACULUS_CUP_ID,
+            "metaculus-cup-fall-2026",
             return_exceptions=True,
         )
 
