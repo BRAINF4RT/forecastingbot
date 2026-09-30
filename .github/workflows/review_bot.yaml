@@ -28,17 +28,14 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Install poetry
-        uses: snok/install-poetry@v1
-        with:
-          virtualenvs-create: true
-          virtualenvs-in-project: true
-          installer-parallel: true
-      - name: Install dependencies
-        run: poetry install --no-interaction --no-root --with integrations
+      # bot-review pins forecasting-tools <0.3.0, so it cannot live in this
+      # repo's poetry lock alongside the 0.3.x fork. Install it in its own
+      # isolated environment instead.
+      - name: Install bot-review
+        run: pipx install metaculus-bot-review
       - name: Review forecasts
         run: |
-          poetry run bot-review review \
+          bot-review review \
             --resolved-since ${{ inputs.days || 30 }} \
             --output review.json \
             --summary review.md
