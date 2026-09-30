@@ -121,13 +121,46 @@ def create_bot(
 ) -> OpenRouterForecastBot:
     return OpenRouterForecastBot(
         research_reports_per_question=1,
-        predictions_per_research_report=4,
+        predictions_per_research_report=3,
         use_research_summary_to_forecast=False,
         publish_reports_to_metaculus=publish_reports_to_metaculus,
         folder_to_save_reports_to=None,
         skip_previously_forecasted_questions=True,
         extra_metadata_in_explanation=True,
     )
+
+
+# Order in which question types are run in test mode. Types not listed here
+# (for example ones added by a newer forecasting-tools) are still tested, after
+# these, in the order the API returned them.
+_TEST_TYPE_ORDER = (
+    "BinaryQuestion",
+    "MultipleChoiceQuestion",
+    "NumericQuestion",
+    "DiscreteQuestion",
+    "DateQuestion",
+    "ConditionalQuestion",
+)
+
+
+def _pick_questions_per_type(questions: list, per_type: int = 1) -> list:
+    """Return up to `per_type` questions of each concrete question type.
+
+    Grouping uses the exact class name, so DiscreteQuestion (a subclass of
+    NumericQuestion) counts as its own type. Within a type the API's order is
+    kept, so the pick is deterministic for a given tournament state.
+    """
+    by_type: dict[str, list] = {}
+    for question in questions:
+        by_type.setdefault(type(question).__name__, []).append(question)
+
+    known = [name for name in _TEST_TYPE_ORDER if name in by_type]
+    extra = [name for name in by_type if name not in _TEST_TYPE_ORDER]
+
+    picked: list = []
+    for name in known + extra:
+        picked.extend(by_type[name][:per_type])
+    return picked
 
 
 async def _run_forecasting_async(
@@ -137,6 +170,7 @@ async def _run_forecasting_async(
         "metaculus_cup",
         "test_questions",
     ],
+    limit: int = 1,
 ) -> list:
     client = MetaculusClient()
 
@@ -163,11 +197,29 @@ async def _run_forecasting_async(
 
     bot.skip_previously_forecasted_questions = False
 
-    # The official bot-testing-area contains examples of all supported
-    # question types. Test mode forecasts them without publishing so CI can
-    # exercise binary, multiple-choice, numeric, date, and conditional paths.
-    return await bot.forecast_on_tournament(
-        "bot-testing-area",
+    # The official bot-testing-area contains examples of every supported
+    # question type. Test mode forecasts ONE question of each type present
+    # (or `limit` per type), without publishing, so CI still exercises the
+    # binary, multiple-choice, numeric, discrete, date and conditional paths
+    # without forecasting the whole area.
+    questions = client.get_all_open_questions_from_tournament("bot-testing-area")
+    if not questions:
+        logger.warning("No open questions found in bot-testing-area.")
+        return []
+
+    chosen = _pick_questions_per_type(questions, per_type=max(1, limit))
+    logger.info(
+        "Test mode: forecasting %d of %d open question(s) (up to %d per type): %s",
+        len(chosen),
+        len(questions),
+        max(1, limit),
+        [
+            f"{type(q).__name__}: {getattr(q, 'page_url', None) or q.question_text[:60]}"
+            for q in chosen
+        ],
+    )
+    return await bot.forecast_questions(
+        chosen,
         return_exceptions=True,
     )
 
@@ -179,12 +231,14 @@ def run_forecasting(
         "metaculus_cup",
         "test_questions",
     ],
+    limit: int = 1,
 ) -> list:
     """Run the selected mode inside exactly one asyncio event loop."""
     return asyncio.run(
         _run_forecasting_async(
             bot,
             run_mode,
+            limit,
         )
     )
 
@@ -207,6 +261,15 @@ def main() -> None:
             "test_questions",
         ],
         default="tournament",
+    )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=1,
+        help=(
+            "test_questions mode only: how many bot-testing-area questions of "
+            "EACH TYPE to forecast (default 1)."
+        ),
     )
 
     args = parser.parse_args()
@@ -243,7 +306,8 @@ def main() -> None:
     )
 
     logger.info(
-        "Research original question + deterministic targeted variants: ON"
+        "Research backend: %s (original question is always query #1)",
+        os.getenv("RESEARCH_BACKEND", "free_searcher"),
     )
 
     logger.info(
@@ -262,6 +326,7 @@ def main() -> None:
     reports = run_forecasting(
         bot,
         args.mode,
+        args.limit,
     )
 
     bot.log_report_summary(reports)
