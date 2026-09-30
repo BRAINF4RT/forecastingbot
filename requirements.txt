@@ -1,4 +1,6 @@
-forecasting-tools>=0.2.0
+# FreeSearcher (used by bot.py's run_research) only exists in this fork,
+# not yet in the published PyPI package.
+git+https://github.com/BRAINF4RT/forecasting-tools.git@main
 python-dotenv>=1.0.0
 httpx>=0.27.0
 requests>=2.31.0
