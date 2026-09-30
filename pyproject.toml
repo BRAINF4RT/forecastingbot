@@ -14,7 +14,10 @@ asknews = "^0.13.11"
 numpy = "^2.3.0"
 openai = "^2.0.0"
 python-dotenv = "^1.0.1"
-forecasting-tools = {git = "https://github.com/BRAINF4RT/forecasting-tools.git", branch = "main"}
+# Fork of Metaculus/forecasting-tools (version 0.3.x). For reproducible builds,
+# replace `branch = "main"` with `rev = "<commit sha>"`: the workflows run
+# `poetry lock` on every run, so a moving branch can change under you.
+forecasting-tools = { git = "https://github.com/BRAINF4RT/forecasting-tools.git", branch = "main" }
 trafilatura = "^2.0.0"
 beautifulsoup4 = "^4.14.0"
 ddgs = "^9.0.0"
@@ -26,7 +29,9 @@ optional = true
 
 [tool.poetry.group.integrations.dependencies]
 lightningrod-ai = "^0.1.14"
-metaculus-bot-review = "^0.1.1"
+# metaculus-bot-review is intentionally NOT listed here: it requires
+# forecasting-tools <0.3.0, which cannot be resolved together with the 0.3.x
+# fork above. review_bot.yaml installs it separately with `pipx`.
 
 
 [tool.poetry.group.dev.dependencies]
