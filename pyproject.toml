@@ -14,7 +14,7 @@ asknews = "^0.13.11"
 numpy = "^2.3.0"
 openai = "^2.0.0"
 python-dotenv = "^1.0.1"
-forecasting-tools = "^0.2.90"
+forecasting-tools = {git = "https://github.com/BRAINF4RT/forecasting-tools.git", branch = "main"}
 trafilatura = "^2.0.0"
 beautifulsoup4 = "^4.14.0"
 ddgs = "^9.0.0"
@@ -35,4 +35,3 @@ ipykernel = "^6.29.5"
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
-
