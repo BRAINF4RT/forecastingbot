@@ -121,7 +121,7 @@ def create_bot(
 ) -> OpenRouterForecastBot:
     return OpenRouterForecastBot(
         research_reports_per_question=1,
-        predictions_per_research_report=3,
+        predictions_per_research_report=4,
         use_research_summary_to_forecast=False,
         publish_reports_to_metaculus=publish_reports_to_metaculus,
         folder_to_save_reports_to=None,
