@@ -74,7 +74,7 @@ from clients.openrouter_helper import (
     generate_forecast_reasoning,
 )
 
-from research.pipeline import run_research_pipeline
+from forecasting_tools import FreeSearcher
 
 
 logger = logging.getLogger(__name__)
@@ -107,6 +107,16 @@ PARSER_FALLBACK_LLM = "openrouter/google/gemma-4-31b-it:free"
 #
 # Nemotron is already known to work through the OpenRouter endpoint.
 PARSER_THIRD_LLM = "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free"
+
+# Same fix, applied to the main research/reasoning chain's third fallback.
+#
+# THIRD_MODEL from clients/openrouter_helper.py is correctly bare (no
+# "openrouter/" prefix) for that module's direct-httpx OpenRouter client,
+# but the default/summarizer/researcher LLM purposes below go through
+# LiteLLM, which requires the "openrouter/" prefix to route correctly --
+# otherwise it fails with "LLM Provider NOT provided" exactly like the
+# parser chain used to.
+RESEARCH_THIRD_LLM = f"openrouter/{THIRD_MODEL}"
 
 
 # Maximum number of forecasting_tools / LiteLLM calls allowed concurrently.
@@ -396,6 +406,45 @@ class FallbackGeneralLlm(GeneralLlm):
         )
 
 
+# ---------------------------------------------------------------------------
+# FreeSearcher research pipeline
+# ---------------------------------------------------------------------------
+#
+# Replaces research/pipeline.py's run_research_pipeline(). Both the query
+# planner and the evidence condenser use the exact same three-model fallback
+# chain as the main forecaster (PRIMARY_LLM -> FALLBACK_LLM ->
+# RESEARCH_THIRD_LLM), via the FallbackGeneralLlm class defined above, so
+# research gets the same rate-limit backoff/retry behavior as reasoning does.
+#
+# If query planning fails entirely (all three models down), FreeSearcher
+# falls back to the same deterministic query rules research/pipeline.py
+# already used (original question, first 8 words, first 6 words + "latest
+# news"), then still gathers Google News / GDELT / DDGS news / Wikipedia /
+# Polymarket / Manifold on top regardless of whether planning succeeded.
+
+_FREE_SEARCHER_CONDENSER_LLM = FallbackGeneralLlm(
+    primary_model=PRIMARY_LLM,
+    fallback_model=FALLBACK_LLM,
+    third_model=RESEARCH_THIRD_LLM,
+    temperature=0.15,
+    timeout=240,
+)
+
+_FREE_SEARCHER_PLANNER_LLM = FallbackGeneralLlm(
+    primary_model=PRIMARY_LLM,
+    fallback_model=FALLBACK_LLM,
+    third_model=RESEARCH_THIRD_LLM,
+    temperature=0.3,
+    timeout=240,
+)
+
+_free_searcher = FreeSearcher(
+    llm=_FREE_SEARCHER_CONDENSER_LLM,
+    planner=_FREE_SEARCHER_PLANNER_LLM,
+    num_queries=3,
+)
+
+
 class OpenRouterForecastBot(ForecastBot):
     """
     Metaculus forecasting bot.
@@ -428,21 +477,21 @@ class OpenRouterForecastBot(ForecastBot):
             "default": FallbackGeneralLlm(
                 primary_model=PRIMARY_LLM,
                 fallback_model=FALLBACK_LLM,
-                third_model=THIRD_MODEL,
+                third_model=RESEARCH_THIRD_LLM,
                 temperature=0.15,
                 timeout=240,
             ),
             "summarizer": FallbackGeneralLlm(
                 primary_model=PRIMARY_LLM,
                 fallback_model=FALLBACK_LLM,
-                third_model=THIRD_MODEL,
+                third_model=RESEARCH_THIRD_LLM,
                 temperature=0.10,
                 timeout=240,
             ),
             "researcher": FallbackGeneralLlm(
                 primary_model=PRIMARY_LLM,
                 fallback_model=FALLBACK_LLM,
-                third_model=THIRD_MODEL,
+                third_model=RESEARCH_THIRD_LLM,
                 temperature=0.10,
                 timeout=240,
             ),
@@ -483,7 +532,7 @@ class OpenRouterForecastBot(ForecastBot):
             question.page_url,
         )
 
-        research = await run_research_pipeline(
+        research = await _free_searcher.research(
             question_text=question.question_text,
             resolution_criteria=(
                 question.resolution_criteria or ""
