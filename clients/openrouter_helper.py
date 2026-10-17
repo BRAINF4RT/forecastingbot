@@ -65,18 +65,22 @@ def _require_api_key() -> str:
 
 
 def _normalise_model(model: str) -> str:
-    """Normalise a LiteLLM-style OpenRouter model name for direct API use."""
+    """Normalise model names for direct OpenRouter API requests."""
     model = (model or "").strip()
-    # `openrouter/free` is OpenRouter's own router ID; the prefix is part of
-    # the real model ID and must NOT be stripped.
-    while model.startswith("openrouter/openrouter/"):
-        model = model[len("openrouter/") :]
+
+    # The free router's actual OpenRouter model ID is openrouter/free.
+    if model == "free":
+        return "openrouter/free"
+
+    # Preserve the router's full ID.
     if model == "openrouter/free":
         return model
-    if model.startswith("openrouter/"):
-        return model[len("openrouter/") :]
-    return model
 
+    # Remove the LiteLLM provider prefix for ordinary model IDs.
+    if model.startswith("openrouter/"):
+        return model[len("openrouter/"):]
+
+    return model
 
 def _is_retryable_status(status_code: int) -> bool:
     return status_code in {408, 409, 425, 429, 500, 502, 503, 504}
