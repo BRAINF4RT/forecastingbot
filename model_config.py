@@ -33,8 +33,19 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Mapping
 
-ROUTER_IDS = frozenset({"openrouter/free", "openrouter/auto"})
+ROUTER_IDS = frozenset({"openrouter/free"})
 CHAIN_SIZE = 3  # the bot's fallback wrapper has exactly three slots
+
+REASONING_SOURCES = [
+    "clients/openrouter_helper.py PRIMARY_MODEL",
+    "clients/openrouter_helper.py FALLBACK_MODEL",
+    "clients/openrouter_helper.py THIRD_MODEL",
+]
+PARSER_SOURCES = [
+    "bot.py PARSER_PRIMARY_LLM",
+    "bot.py PARSER_FALLBACK_LLM",
+    "bot.py PARSER_THIRD_LLM",
+]
 
 _ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._+-]*(?::[A-Za-z0-9._-]+)?$")
 
@@ -64,6 +75,18 @@ def is_router(model: str) -> bool:
 def is_free(model: str) -> bool:
     m = bare_id(model)
     return m.endswith(":free") or m == "openrouter/free"
+
+
+def repair_router_typo(model: str, label: str, source: str, warnings: list[str]) -> str:
+    """'free' / 'auto' can only mean OpenRouter's router models: fix them and say where they came from."""
+    if model in ("free", "auto"):
+        fixed = "openrouter/" + model
+        warnings.append(
+            f"{label} model {source} is {model!r}, which is not a model id. Using {fixed!r} instead. "
+            f"Set it to {fixed!r} in the source to silence this warning."
+        )
+        return fixed
+    return model
 
 
 # -- plan ---------------------------------------------------------------------------
@@ -99,33 +122,43 @@ def build_plan(env: Mapping[str, str], default_reasoning: list[str], default_par
     plan = ModelPlan(reasoning=list(default_reasoning), parser=list(default_parser))
     plan.notes.append("reasoning chain: defaults from clients/openrouter_helper.py")
     plan.notes.append("parser chain: defaults from bot.py")
+    reasoning_src = list(REASONING_SOURCES)
+    parser_src = list(PARSER_SOURCES)
 
     forecast_raw = (env.get("FORECAST_MODELS") or "").strip()
     legacy = (env.get("OPENROUTER_MODEL") or "").strip()
     parser_raw = (env.get("PARSER_MODELS") or "").strip()
 
-    if forecast_raw:
-        chain = parse_chain(forecast_raw)
+    def from_env(var: str, raw: str) -> tuple[list[str], list[str]]:
+        chain = parse_chain(raw)
         if len(chain) > CHAIN_SIZE:
-            plan.warnings.append(f"FORECAST_MODELS lists {len(chain)} models; only the first {CHAIN_SIZE} are used.")
+            plan.warnings.append(f"{var} lists {len(chain)} models; only the first {CHAIN_SIZE} are used.")
         if len(chain) < CHAIN_SIZE:
-            plan.warnings.append(f"FORECAST_MODELS lists {len(chain)} model(s); the last is repeated to fill "
+            plan.warnings.append(f"{var} lists {len(chain)} model(s); the last is repeated to fill "
                                  f"{CHAIN_SIZE} slots.")
-        plan.reasoning = pad_chain(chain[:CHAIN_SIZE])
+        chain = chain[:CHAIN_SIZE]
+        return chain, [f"{var} entry {i + 1}" for i in range(len(chain))]
+
+    if forecast_raw:
+        chain, src = from_env("FORECAST_MODELS", forecast_raw)
+        plan.reasoning = chain
+        reasoning_src = src
         plan.notes[0] = "reasoning chain: FORECAST_MODELS"
     elif legacy:
         plan.reasoning = [bare_id(legacy)] + plan.reasoning[1:]
+        reasoning_src = ["OPENROUTER_MODEL"] + reasoning_src[1:]
         plan.notes[0] = "reasoning chain: defaults, first model replaced by OPENROUTER_MODEL"
 
     if parser_raw:
-        chain = parse_chain(parser_raw)
-        if len(chain) > CHAIN_SIZE:
-            plan.warnings.append(f"PARSER_MODELS lists {len(chain)} models; only the first {CHAIN_SIZE} are used.")
-        if len(chain) < CHAIN_SIZE:
-            plan.warnings.append(f"PARSER_MODELS lists {len(chain)} model(s); the last is repeated to fill "
-                                 f"{CHAIN_SIZE} slots.")
-        plan.parser = pad_chain(chain[:CHAIN_SIZE])
+        chain, src = from_env("PARSER_MODELS", parser_raw)
+        plan.parser = chain
+        parser_src = src
         plan.notes[1] = "parser chain: PARSER_MODELS"
+
+    plan.reasoning = pad_chain([repair_router_typo(m, "reasoning", src, plan.warnings)
+                                for m, src in zip(plan.reasoning, reasoning_src)])
+    plan.parser = pad_chain([repair_router_typo(m, "parser", src, plan.warnings)
+                             for m, src in zip(plan.parser, parser_src)])
     return plan
 
 
@@ -136,11 +169,7 @@ def validate_plan(plan: ModelPlan) -> ModelPlan:
             plan.errors.append(f"The {label} chain is empty.")
             continue
         for model in dict.fromkeys(chain):  # padded slots repeat; report each model once
-            if model in ("free", "auto"):
-                plan.errors.append(
-                    f"{label}: {model!r} is not a model id. OpenRouter's router models are named "
-                    f"'openrouter/{model}' (with the prefix).")
-            elif not _ID_RE.match(model):
+            if not _ID_RE.match(model):
                 plan.errors.append(f"{label}: {model!r} does not look like an OpenRouter model id "
                                    "(expected 'vendor/model' or 'vendor/model:variant').")
             elif not is_free(model):
