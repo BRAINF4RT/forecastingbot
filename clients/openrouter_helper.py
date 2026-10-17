@@ -14,9 +14,9 @@ logger = logging.getLogger(__name__)
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 # Forecast/research fallback chain. All three are free OpenRouter endpoints.
-PRIMARY_MODEL = "nvidia/nemotron-3-ultra-550b-a55b:free"
-FALLBACK_MODEL = "poolside/laguna-s-2.1:free"
-THIRD_MODEL = "qwen/qwen3.8-27b:free"
+PRIMARY_MODEL = "free"
+FALLBACK_MODEL = "free"
+THIRD_MODEL = "free"
 
 _OPENROUTER_CONCURRENCY = 1
 
