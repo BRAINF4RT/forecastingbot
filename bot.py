@@ -106,7 +106,7 @@ PARSER_FALLBACK_LLM = "openrouter/free"
 #     LLM Provider NOT provided
 #
 # Nemotron is already known to work through the OpenRouter endpoint.
-PARSER_THIRD_LLM = "free"
+PARSER_THIRD_LLM = "openrouter/free"
 
 # Same fix, applied to the main research/reasoning chain's third fallback.
 #
