@@ -91,8 +91,8 @@ FALLBACK_LLM = f"openrouter/{FALLBACK_MODEL}"
 #
 # These are deliberately kept separate from the main reasoning chain because
 # the parser is used by forecasting_tools' structured-output machinery.
-PARSER_PRIMARY_LLM = "openrouter/qwen/qwen3.8-27b:free"
-PARSER_FALLBACK_LLM = "openrouter/google/gemma-4-31b-it:free"
+PARSER_PRIMARY_LLM = "openrouter/free"
+PARSER_FALLBACK_LLM = "openrouter/free"
 
 # IMPORTANT:
 # Keep this explicitly provider-qualified.
@@ -106,7 +106,7 @@ PARSER_FALLBACK_LLM = "openrouter/google/gemma-4-31b-it:free"
 #     LLM Provider NOT provided
 #
 # Nemotron is already known to work through the OpenRouter endpoint.
-PARSER_THIRD_LLM = "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free"
+PARSER_THIRD_LLM = "free"
 
 # Same fix, applied to the main research/reasoning chain's third fallback.
 #
