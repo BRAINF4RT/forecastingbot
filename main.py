@@ -5,6 +5,7 @@ import argparse
 import asyncio
 import logging
 import os
+import sys
 from typing import Literal
 
 import dotenv
@@ -18,16 +19,11 @@ from bot_helpers import (
 
 silence_noisy_dependencies()
 
+import bot as bot_module  # noqa: E402
+import model_config  # noqa: E402
+from bot import OpenRouterForecastBot  # noqa: E402
+from clients import openrouter_helper  # noqa: E402
 from forecasting_tools import MetaculusClient  # noqa: E402
-from bot import (  # noqa: E402
-    FALLBACK_LLM,
-    PARSER_FALLBACK_LLM,
-    PARSER_PRIMARY_LLM,
-    PARSER_THIRD_LLM,
-    PRIMARY_LLM,
-    THIRD_MODEL,
-    OpenRouterForecastBot,
-)
 
 dotenv.load_dotenv()
 
@@ -38,88 +34,85 @@ FALL_FUTUREEVAL_2026_URL = (
     "https://www.metaculus.com/tournament/fall-futureeval-2026/"
 )
 
-EXPECTED_PRIMARY_MODEL = "free"
-EXPECTED_FALLBACK_MODEL = "free"
-EXPECTED_THIRD_MODEL = "free"
-EXPECTED_PARSER_PRIMARY_MODEL = "free"
-EXPECTED_PARSER_FALLBACK_MODEL = "free"
-EXPECTED_PARSER_THIRD_MODEL = "free"
+
+# --------------------------------------------------------------------------- models
+#
+# Models are chosen in ONE place. Either leave the defaults in
+# clients/openrouter_helper.py (reasoning chain) and bot.py (parser chain), or set
+#
+#     FORECAST_MODELS=nvidia/nemotron-3-ultra-550b-a55b:free,poolside/laguna-s-2.1:free,openrouter/free
+#     PARSER_MODELS=google/gemma-4-31b-it:free,openrouter/free
+#
+# in .env or the workflow. Use plain OpenRouter ids; "openrouter/free" is allowed.
+# model_config.py converts them to the spelling each client needs, so there is no list of
+# "expected" models to keep in sync any more.
 
 
-def _bare_model(model: str) -> str:
-    return model.removeprefix("openrouter/")
-
-
-def validate_openrouter_configuration() -> None:
+def configure_models() -> model_config.ModelPlan:
+    """Resolve, validate and apply the model plan. Raises only on unusable settings."""
     if not os.getenv("OPENROUTER_API_KEY"):
         raise RuntimeError("OPENROUTER_API_KEY is not set.")
 
-    configured_primary = os.getenv(
-        "OPENROUTER_MODEL",
-        EXPECTED_PRIMARY_MODEL,
-    )
+    default_reasoning, default_parser = model_config.defaults_from_code(openrouter_helper, bot_module)
+    plan = model_config.build_plan(os.environ, default_reasoning, default_parser)
+    model_config.validate_plan(plan)
 
-    if configured_primary != EXPECTED_PRIMARY_MODEL:
+    if plan.errors:
         raise RuntimeError(
-            "Unexpected primary model. "
-            f"Expected {EXPECTED_PRIMARY_MODEL}; found {configured_primary}."
+            "Model configuration problem(s):\n  - " + "\n  - ".join(plan.errors)
+        )
+    for warning in plan.warnings:
+        logger.warning("Model configuration: %s", warning)
+
+    legacy = os.getenv("OPENROUTER_MODEL")
+    if legacy and not os.getenv("FORECAST_MODELS"):
+        logger.info(
+            "OPENROUTER_MODEL is set (%s): it now overrides only the first reasoning model. "
+            "Use FORECAST_MODELS to set the whole chain.",
+            legacy,
         )
 
-    actual = {
-        "primary": _bare_model(PRIMARY_LLM),
-        "fallback": _bare_model(FALLBACK_LLM),
-        "third fallback": THIRD_MODEL,
-        "parser primary": _bare_model(PARSER_PRIMARY_LLM),
-        "parser fallback": _bare_model(PARSER_FALLBACK_LLM),
-        "parser third fallback": _bare_model(PARSER_THIRD_LLM),
-    }
+    model_config.apply_plan(plan, helper=openrouter_helper, bot_module=bot_module)
 
-    expected = {
-        "primary": EXPECTED_PRIMARY_MODEL,
-        "fallback": EXPECTED_FALLBACK_MODEL,
-        "third fallback": EXPECTED_THIRD_MODEL,
-        "parser primary": EXPECTED_PARSER_PRIMARY_MODEL,
-        "parser fallback": EXPECTED_PARSER_FALLBACK_MODEL,
-        "parser third fallback": EXPECTED_PARSER_THIRD_MODEL,
-    }
-
-    for name, value in actual.items():
-        if value != expected[name]:
-            raise RuntimeError(
-                f"Internal {name} model mismatch: "
-                f"expected {expected[name]}, found {value}"
-            )
-
+    for line in model_config.describe(plan):
+        logger.info(line)
     logger.info(
-        "Forecast/research chain: %s -> %s -> %s",
-        PRIMARY_LLM,
-        FALLBACK_LLM,
-        THIRD_MODEL,
+        "Search query generation: original question is always query #1; "
+        "query planner: %s",
+        getattr(openrouter_helper, "QUERY_PLANNER_MODEL", "n/a"),
     )
-
-    logger.info(
-        "Parser chain: %s -> %s -> %s",
-        PARSER_PRIMARY_LLM,
-        PARSER_FALLBACK_LLM,
-        PARSER_THIRD_LLM,
-    )
-
-    logger.info(
-        "Search query generation: deterministic; original question always included."
-    )
-
     logger.info(
         "Scraper chain: HTTP -> Trafilatura -> BeautifulSoup -> DDGS indexed snippet."
     )
-
     logger.info("Metaculus URLs are not filtered from research results.")
+    return plan
+
+
+async def _check_models_async(plan: model_config.ModelPlan) -> int:
+    """Send one tiny request per configured model through BOTH clients the bot uses."""
+    from forecasting_tools import GeneralLlm
+
+    prompt = "Reply with exactly: OK"
+
+    async def direct(model: str) -> str:
+        return await openrouter_helper._generate_with_model(
+            prompt, model=model, temperature=0.0, max_tokens=400, timeout=90.0, max_retries=1
+        )
+
+    async def via_litellm(model: str) -> str:
+        return await GeneralLlm(model=model, temperature=0.0, timeout=90).invoke(prompt)
+
+    print("Checking each configured model (one tiny request per client)...\n")
+    rows = await model_config.check_models(plan, direct=direct, via_litellm=via_litellm)
+    print(model_config.render_check(plan, rows))
+    return 0 if model_config.check_passed(plan, rows) else 1
 
 
 def create_bot(
     *,
     publish_reports_to_metaculus: bool,
 ) -> OpenRouterForecastBot:
-    return OpenRouterForecastBot(
+    bot = OpenRouterForecastBot(
         research_reports_per_question=1,
         predictions_per_research_report=3,
         use_research_summary_to_forecast=False,
@@ -128,6 +121,13 @@ def create_bot(
         skip_previously_forecasted_questions=True,
         extra_metadata_in_explanation=True,
     )
+    problems = model_config.verify_bot_models(bot)
+    if problems:
+        raise RuntimeError(
+            "The bot would send badly formed model names to LiteLLM:\n  - "
+            + "\n  - ".join(problems)
+        )
+    return bot
 
 
 # Order in which question types are run in test mode. Types not listed here
@@ -243,16 +243,15 @@ def run_forecasting(
     )
 
 
-def main() -> None:
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    )
+def _all_failed(reports: list) -> bool:
+    """True when questions were attempted and every one ended in an exception."""
+    return bool(reports) and all(isinstance(report, BaseException) for report in reports)
 
+
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Run the OpenRouter Metaculus forecasting bot"
     )
-
     parser.add_argument(
         "--mode",
         choices=[
@@ -271,8 +270,33 @@ def main() -> None:
             "EACH TYPE to forecast (default 1)."
         ),
     )
+    parser.add_argument(
+        "--check-models",
+        action="store_true",
+        help=(
+            "Send one tiny request to every configured model through both clients, "
+            "print which work, and exit. Needs only OPENROUTER_API_KEY."
+        ),
+    )
+    parser.add_argument(
+        "--no-fail",
+        action="store_true",
+        help="Exit 0 even if every question failed (default: exit 1 in that case).",
+    )
+    return parser
 
-    args = parser.parse_args()
+
+def main(argv: list[str] | None = None) -> int:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    )
+
+    args = build_parser().parse_args(argv)
+
+    if args.check_models:
+        plan = configure_models()
+        return asyncio.run(_check_models_async(plan))
 
     check_environment(strict=True)
 
@@ -291,7 +315,7 @@ def main() -> None:
             + ", ".join(missing)
         )
 
-    validate_openrouter_configuration()
+    configure_models()
 
     publish = args.mode != "test_questions"
 
@@ -344,6 +368,15 @@ def main() -> None:
         tournament_url=tournament_urls.get(args.mode),
     )
 
+    if _all_failed(reports) and not args.no_fail:
+        logger.error(
+            "Every one of the %d question(s) failed; exiting with status 1. "
+            "Run `python main.py --check-models` to test your models.",
+            len(reports),
+        )
+        return 1
+    return 0
+
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
