@@ -38,12 +38,12 @@ FALL_FUTUREEVAL_2026_URL = (
     "https://www.metaculus.com/tournament/fall-futureeval-2026/"
 )
 
-EXPECTED_PRIMARY_MODEL = "nvidia/nemotron-3-ultra-550b-a55b:free"
+EXPECTED_PRIMARY_MODEL = "free"
 EXPECTED_FALLBACK_MODEL = "poolside/laguna-s-2.1:free"
-EXPECTED_THIRD_MODEL = "qwen/qwen3.8-27b:free"
-EXPECTED_PARSER_PRIMARY_MODEL = "qwen/qwen3.8-27b:free"
+EXPECTED_THIRD_MODEL = "free"
+EXPECTED_PARSER_PRIMARY_MODEL = "free"
 EXPECTED_PARSER_FALLBACK_MODEL = "google/gemma-4-31b-it:free"
-EXPECTED_PARSER_THIRD_MODEL = "nvidia/nemotron-3-ultra-550b-a55b:free"
+EXPECTED_PARSER_THIRD_MODEL = "free"
 
 
 def _bare_model(model: str) -> str:
